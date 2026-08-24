@@ -62,20 +62,24 @@ def test_docx_paragraph_order_is_preserved_around_table(sample_docx):
 def test_hwpx_short_paragraph_coalesces_into_next(sample_hwpx):
     nodes = build_structure_tree_hwpx(sample_hwpx)
     paras = [n for n in nodes if n["type"] == "paragraph"]
-    assert len(paras) == 2
-    # the short "보도자료" label got merged into the paragraph that follows it
+    assert len(paras) == 19
+    # the short "보도자료" label paragraph got merged into the "보도시점..."
+    # paragraph that follows it, instead of staying a standalone node
     assert paras[0]["text"].startswith("보도자료")
-    assert "두 번째 문단" in paras[0]["text"]
+    assert "보도시점" in paras[0]["text"]
 
 
 def test_hwpx_nested_p_absorbed_not_double_counted(sample_hwpx):
     nodes = build_structure_tree_hwpx(sample_hwpx)
     paras = [n for n in nodes if n["type"] == "paragraph"]
-    # nested <hp:p> text (inside a table cell) is absorbed into the outer
-    # paragraph's text, and must not produce its own separate node
-    assert "중첩된 문단 텍스트" in paras[0]["text"]
-    assert paras[0]["id"] == "p1"
-    assert paras[1]["id"] == "p2"
+    # the contact-info block is a table (<hp:tbl>/<hp:subList>/<hp:p>) -- its
+    # nested <hp:p> cell text is absorbed into one outer paragraph's text
+    # (concatenated with no separators, exactly like the real HWPX gives it),
+    # and must not produce its own separate top-level node.
+    last = paras[-1]
+    assert "담당 부서" in last["text"]
+    assert "전한성" in last["text"] and "문지환" in last["text"]
+    assert last["id"] == "p19"
 
 
 # ─────────────────────────────────────────────
