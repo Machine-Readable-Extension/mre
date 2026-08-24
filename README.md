@@ -1,4 +1,4 @@
-# mre
+# Machine-Readable-Extension(MRE)
 
 [![Tests](https://github.com/Machine-Readable-Extension/mre/actions/workflows/tests.yml/badge.svg)](https://github.com/Machine-Readable-Extension/mre/actions/workflows/tests.yml)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=Machine-Readable-Extension_mre&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=Machine-Readable-Extension_mre)
