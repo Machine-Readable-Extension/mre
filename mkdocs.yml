@@ -1,0 +1,42 @@
+site_name: Machine-Readable Extension
+site_description: A producer-side document standard that lets LLM agents read documents precisely
+site_url: https://machine-readable-extension.github.io/mre/
+repo_url: https://github.com/Machine-Readable-Extension/mre
+repo_name: Machine-Readable-Extension/mre
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+  palette:
+    - scheme: default
+      toggle: { icon: material/brightness-7, name: Dark mode }
+    - scheme: slate
+      toggle: { icon: material/brightness-4, name: Light mode }
+
+nav:
+  - Overview: index.md
+  - Install: install.md
+  - Quick start: quickstart.md
+  - Agentic RAG: agentic-rag.md
+  - Document formats: formats.md
+  - Specification: spec.md
+  - API Reference: api.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: true
+            docstring_style: google
+
+markdown_extensions:
+  - admonition
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - toc: { permalink: true }

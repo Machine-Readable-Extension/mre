@@ -39,6 +39,9 @@ fuzzy = ["thefuzz>=0.19"]
 # 테스트 실행용. mre/tests/ 는 packages 목록에 없으므로(아래 참조) 배포 wheel에는
 # 안 들어간다 — 개발 전용.
 test = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-cov>=5.0"]
+# Docs site (mkdocs.yml at repo root). `mkdocs serve`/`mkdocs build` locally,
+# or via the "Docs" GitHub Actions workflow on push to master.
+docs = ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.24"]
 
 [project.urls]
 Homepage = "https://github.com/Machine-Readable-Extension/mre"
