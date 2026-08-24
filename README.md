@@ -1,6 +1,9 @@
 # mre
 
 [![Tests](https://github.com/Machine-Readable-Extension/mre/actions/workflows/tests.yml/badge.svg)](https://github.com/Machine-Readable-Extension/mre/actions/workflows/tests.yml)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=Machine-Readable-Extension_mre&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=Machine-Readable-Extension_mre)
+[![Bugs](https://sonarcloud.io/api/project_badges/measure?project=Machine-Readable-Extension_mre&metric=bugs)](https://sonarcloud.io/summary/new_code?id=Machine-Readable-Extension_mre)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=Machine-Readable-Extension_mre&metric=coverage)](https://sonarcloud.io/summary/new_code?id=Machine-Readable-Extension_mre)
 
 **Machine-Readable Extension (MRE)** — a producer-side document standard and
 navigation structure that lets LLM agents read a document precisely, instead

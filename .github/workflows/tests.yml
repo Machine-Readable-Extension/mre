@@ -32,3 +32,21 @@ jobs:
         with:
           name: coverage-xml
           path: coverage.xml
+
+  sonarcloud:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # SonarCloud wants full history for blame/new-code analysis
+
+      - name: Download coverage report
+        uses: actions/download-artifact@v7
+        with:
+          name: coverage-xml
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@v8
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
