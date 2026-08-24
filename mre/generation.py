@@ -187,13 +187,16 @@ async def call_llm_async(
     label = title[:50]
     max_tok = _resolve_max_tokens(messages, model_ctx, label)
     t0 = time.perf_counter()
+    # messages is a plain list[dict] and response_format a plain dict, not the SDK's
+    # typed TypedDicts -- deliberate, so this works uniformly against any
+    # OpenAI-compatible backend rather than just the official API's exact param types.
     response = await client.chat.completions.create(
         model=model,
         max_tokens=max_tok,
         messages=messages,
         temperature=0.0,
         response_format=_build_response_format(guided),
-    )
+    )  # type: ignore[call-overload]
     stats = _new_stats()
     _accumulate_usage(stats, response, time.perf_counter() - t0)
     return _parse_openai_response(_extract_content(response, label, max_tok)), stats

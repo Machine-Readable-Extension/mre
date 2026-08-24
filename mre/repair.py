@@ -219,13 +219,15 @@ async def _call_regen_async(
     label = f"{title[:50]} [regen]"
     max_tok = _resolve_max_tokens(messages, model_ctx, label)
     t0 = time.perf_counter()
+    # messages is a plain list[dict] and response_format a plain dict -- same
+    # deliberate looseness as generation.py's call_llm_async(), for backend portability.
     response = await client.chat.completions.create(
         model=model,
         max_tokens=max_tok,
         messages=messages,
         temperature=0.0,
         response_format=_build_regen_response_format(guided),
-    )
+    )  # type: ignore[call-overload]
     stats = _new_stats()
     _accumulate_usage(stats, response, time.perf_counter() - t0)
     return _parse_openai_response(_extract_content(response, label, max_tok)), stats

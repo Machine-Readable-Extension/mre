@@ -100,6 +100,7 @@ async def generate_mre(
     if fmt is DocFormat.HTML:
         if url is None:
             raise ValueError("format=html generation requires url (to pick a site-specific adapter).")
+        assert isinstance(source, str), "format=html requires source to be raw HTML text (str), not a path"
         html = source
         site_adapter = get_site_adapter(url, fallback=html_fallback_adapter)
         soup = BeautifulSoup(html, "lxml")

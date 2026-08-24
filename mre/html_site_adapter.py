@@ -339,7 +339,8 @@ def _wiki_build_structure_tree(soup: BeautifulSoup) -> list[dict]:
 
         # div.mw-heading.mw-heading{k} -> heading node
         if el.name == "div":
-            classes = el.get("class", [])
+            raw_classes: str | list[str] = el.get("class") or []
+            classes = raw_classes if isinstance(raw_classes, list) else [raw_classes]
             for cls in classes:
                 m = re.match(r"mw-heading(\d)", cls)
                 if m:

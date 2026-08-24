@@ -36,6 +36,25 @@ jobs:
           name: coverage-xml
           path: coverage.xml
 
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # mypy's `python_version` setting in pyproject.toml (pinned to 3.10, the
+      # minimum supported version) controls which syntax/stdlib it checks
+      # against -- independent of which interpreter mypy itself runs under.
+      - name: Install mre with typecheck extras
+        run: pip install -e ".[typecheck,fuzzy]"
+
+      - name: Run mypy
+        run: mypy mre
+
   sonarcloud:
     needs: test
     runs-on: ubuntu-latest

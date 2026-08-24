@@ -50,7 +50,8 @@ def build_progressive_action_schema(
         A ``oneOf`` JSON schema for the current turn.
     """
     seen_t: set[str] = set()
-    uniq_titles = [t for t in doc_titles if not (t in seen_t or seen_t.add(t))]
+    # set.add() returning None is intentional here — a dedup-while-preserving-order idiom.
+    uniq_titles = [t for t in doc_titles if not (t in seen_t or seen_t.add(t))]  # type: ignore[func-returns-value]
 
     def _titles_action_schema(action_name: str) -> dict:
         return {

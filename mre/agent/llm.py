@@ -50,31 +50,36 @@ async def generate_action(
         },
     )
     t0 = time.perf_counter()
+    # kwargs is a plain dict (not the SDK's typed ChatCompletionMessageParam/
+    # ResponseFormat TypedDicts) so this works uniformly across any
+    # OpenAI-compatible backend, including vLLM's non-standard extra_body
+    # fields below -- that's also why every .create(**kwargs) call here
+    # fails static overload resolution against the SDK's strict stub.
     try:
-        resp = await client.chat.completions.create(**kwargs)
+        resp = await client.chat.completions.create(**kwargs)  # type: ignore[call-overload]
     except TypeError:
         # Very old client: json_schema unsupported -> guided_json fallback
         kwargs["response_format"] = {"type": "json_object"}
         kwargs["extra_body"] = {"guided_json": schema}
-        resp = await client.chat.completions.create(**kwargs)
+        resp = await client.chat.completions.create(**kwargs)  # type: ignore[call-overload]
     except Exception as e:
         err_s = str(e).lower()
         if "json_schema" in err_s or "response_format" in err_s:
             kwargs["response_format"] = {"type": "json_object"}
             kwargs["extra_body"] = {"guided_json": schema}
-            resp = await client.chat.completions.create(**kwargs)
+            resp = await client.chat.completions.create(**kwargs)  # type: ignore[call-overload]
         elif "guided_decoding_backend" in err_s or "guided-decoding-backend" in err_s:
             kwargs["extra_body"] = {"guided_json": schema}
-            resp = await client.chat.completions.create(**kwargs)
+            resp = await client.chat.completions.create(**kwargs)  # type: ignore[call-overload]
         elif "guided_json" in err_s or "extra" in err_s:
             # Gateway doesn't support extra_body at all: JSON-mode only
             kwargs.pop("extra_body", None)
-            resp = await client.chat.completions.create(**kwargs)
+            resp = await client.chat.completions.create(**kwargs)  # type: ignore[call-overload]
         else:
             raise
     stats = _new_stats()
     _accumulate_usage(stats, resp, time.perf_counter() - t0)
-    return resp.choices[0].message.content.strip(), stats
+    return (resp.choices[0].message.content or "").strip(), stats
 
 
 async def generate_text(
@@ -92,9 +97,11 @@ async def generate_text(
         A ``(text, usage_stats)`` tuple.
     """
     t0 = time.perf_counter()
+    # messages is a plain list[dict], not the SDK's typed ChatCompletionMessageParam --
+    # same reason as generate_action() above.
     resp = await client.chat.completions.create(
-        model=model, messages=messages, max_completion_tokens=max_tokens, temperature=_TEMPERATURE,
+        model=model, messages=messages, max_completion_tokens=max_tokens, temperature=_TEMPERATURE,  # type: ignore[arg-type]
     )
     stats = _new_stats()
     _accumulate_usage(stats, resp, time.perf_counter() - t0)
-    return resp.choices[0].message.content.strip(), stats
+    return (resp.choices[0].message.content or "").strip(), stats

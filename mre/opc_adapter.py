@@ -200,9 +200,14 @@ def build_structure_tree_hwpx(hwpx_path: Path) -> list[dict]:
     nodes: list[dict] = []
     p_counter = 0
 
+    def _section_idx(name: str) -> int:
+        m = _HWPX_SECTION_IDX_RE.search(name)
+        assert m is not None  # guaranteed: name already matched _HWPX_SECTION_RE, which requires \d+
+        return int(m.group())
+
     with zipfile.ZipFile(hwpx_path, "r") as zf:
         section_files = [name for name in zf.namelist() if _HWPX_SECTION_RE.match(name)]
-        section_files.sort(key=lambda x: int(_HWPX_SECTION_IDX_RE.search(x).group()))
+        section_files.sort(key=_section_idx)
         for sec in section_files:
             with zf.open(sec) as xml_file:
                 tree = ET.parse(xml_file)

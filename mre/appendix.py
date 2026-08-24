@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup, PageElement, Tag
 
 _APPENDIX_HEADING_IDS: set[str] = {
     "External_links",
@@ -63,13 +63,15 @@ def _is_appendix_heading_div(div: Tag) -> tuple[bool, str, int]:
     Returns:
         A ``(is_appendix, text, level)`` tuple.
     """
-    cls = div.get("class") or []
+    raw_cls: str | list[str] = div.get("class") or []
+    cls = raw_cls if isinstance(raw_cls, list) else [raw_cls]
     if not any(c.startswith("mw-heading") for c in cls):
         return False, "", 0
     h = div.find(_HEADING_TAG_RE)
     if not h:
         return False, "", 0
-    hid = (h.get("id") or "").strip()
+    raw_id = h.get("id")
+    hid = (raw_id if isinstance(raw_id, str) else "").strip()
     htext = h.get_text(strip=True)
     if hid in _APPENDIX_HEADING_IDS or htext in _APPENDIX_HEADING_TEXT:
         level = _heading_level_from_div(div) or 2
@@ -102,7 +104,8 @@ def _strip_appendix_sections(soup: BeautifulSoup) -> list[tuple[int, str]]:
 
     # 1) Parsoid: delete <section aria-labelledby="External_links"> wholesale
     for sec in list(soup.find_all("section")):
-        labelled_by = (sec.get("aria-labelledby") or "").strip()
+        raw_labelled_by = sec.get("aria-labelledby")
+        labelled_by = (raw_labelled_by if isinstance(raw_labelled_by, str) else "").strip()
         first_heading = sec.find(_HEADING_TAG_RE)
         htext = first_heading.get_text(strip=True) if first_heading else ""
         is_appendix = (
@@ -139,12 +142,13 @@ def _strip_appendix_sections(soup: BeautifulSoup) -> list[tuple[int, str]]:
             continue
         appendix.append((level, text))
         # Remove every sibling from this div up to (not including) the next mw-heading div.
-        cur = div
+        cur: PageElement | None = div
         while cur is not None:
             nxt = cur.next_sibling
             # Stop at the next mw-heading div — that's where the next section starts.
             if isinstance(nxt, Tag) and nxt.name == "div":
-                nxt_cls = nxt.get("class") or []
+                raw_nxt_cls: str | list[str] = nxt.get("class") or []
+                nxt_cls = raw_nxt_cls if isinstance(raw_nxt_cls, list) else [raw_nxt_cls]
                 if any(c.startswith("mw-heading") for c in nxt_cls):
                     cur.decompose()
                     break
