@@ -18,6 +18,7 @@ from mre.html_site_adapter import (
 from mre.opc_adapter import (
     OPCAdapter,
     embed_mre_opc,
+    fetch_opc,
     get_opc_adapter,
     parse_opc,
 )
@@ -48,6 +49,7 @@ __all__ = [
     "registered_sites",
     "OPCAdapter",
     "embed_mre_opc",
+    "fetch_opc",
     "get_opc_adapter",
     "parse_opc",
     "MREGenerationResult",

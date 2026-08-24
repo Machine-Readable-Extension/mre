@@ -29,24 +29,30 @@ from pathlib import Path
 from typing import Callable
 
 from mre.format_detect import DocFormat
+from mre.html_site_adapter import FetchNotSupportedError
 from mre.nodes import strip_to_text_nodes
 
 
 @dataclass(frozen=True)
 class OPCAdapter:
-    """OPC zip 문서 하나에 대한 파싱/임베딩 로직 묶음.
+    """OPC zip 문서 하나에 대한 파싱/임베딩/fetch 로직 묶음.
 
     extract : 문서 경로 -> heading/paragraph 노드 리스트
               ({"type": "heading", "level", "text"} | {"type": "paragraph", "id", "text"})
     strip   : extract() 결과 -> LLM 전송용으로 정리된 노드 리스트
     embed   : (문서 경로, 조립된 mre xml) -> None (zip root에 mre.xml을 in-place 삽입/교체)
     exists  : 문서 경로 -> 이미 mre.xml이 삽입되어 있는지 여부
+    fetch   : (문서 경로, node id) -> 그 단락의 전체 텍스트. id="full"이면 문서 전체 텍스트를
+              이어붙여 반환. 못 찾으면 빈 문자열(예외 아님) — html_site_adapter.fetch_block()과
+              동일 계약. None이면 이 어댑터는 fetch를 지원하지 않음(fetch_opc()가
+              FetchNotSupportedError).
     """
     name: str
     extract: Callable[[Path], list[dict]]
     strip: Callable[[list[dict]], list[dict]]
     embed: Callable[[Path, str], None]
     exists: Callable[[Path], bool]
+    fetch: Callable[[Path, str], str] | None = None
 
 
 # ─────────────────────────────────────────────
@@ -255,6 +261,38 @@ def insert_mre_into_zip(opc_path: Path, mre_xml: str) -> None:
 
 
 # ─────────────────────────────────────────────
+# fetch (hwpx/docx 공통 — id 조회 로직은 동일, extract 함수만 다름)
+# ─────────────────────────────────────────────
+# html_site_adapter._wiki_fetch와 달리 별도 재파싱 로직이 필요 없다: extract()가 만드는
+# paragraph 노드의 text는 (Wikipedia의 _wiki_extract_node_text와 달리) LLM 프롬프트용으로
+# 잘리지 않은 전체 텍스트이므로, extract()를 그대로 다시 불러 인덱싱하면 곧 fetch가 된다 —
+# 진짜 "single truth"(생성 시점과 fetch 시점이 완전히 같은 함수를 씀).
+
+_PID_RE = re.compile(r"^[A-Za-z]*(\d+)$")
+
+
+def _fetch_from_paragraphs(nodes: list[dict], node_id: str) -> str:
+    para_nodes = [n for n in nodes if n.get("type") == "paragraph"]
+    if node_id == "full":
+        return "\n\n".join(n["text"] for n in para_nodes)
+    m = _PID_RE.match(node_id)
+    if not m:
+        return ""
+    idx = int(m.group(1))
+    if 1 <= idx <= len(para_nodes):
+        return para_nodes[idx - 1]["text"]
+    return ""
+
+
+def _hwpx_fetch(path: Path, node_id: str) -> str:
+    return _fetch_from_paragraphs(build_structure_tree_hwpx(path), node_id)
+
+
+def _docx_fetch(path: Path, node_id: str) -> str:
+    return _fetch_from_paragraphs(build_structure_tree_docx(path), node_id)
+
+
+# ─────────────────────────────────────────────
 # 어댑터 등록 (hwpx/docx 공통 — embed/exists는 두 포맷에서 동일한 zip 조작)
 # ─────────────────────────────────────────────
 
@@ -280,6 +318,17 @@ def embed_mre_opc(path: str | Path, mre_xml: str, fmt: DocFormat) -> None:
     get_opc_adapter(fmt).embed(Path(path), mre_xml)
 
 
+def fetch_opc(path: str | Path, node_id: str, fmt: DocFormat) -> str:
+    """path(hwpx/docx)에서 node_id 단락의 전체 텍스트를 가져온다. id="full"이면 문서
+    전체 텍스트. 어댑터가 fetch를 지원하지 않으면 FetchNotSupportedError."""
+    adapter = get_opc_adapter(fmt)
+    if adapter.fetch is None:
+        raise FetchNotSupportedError(
+            f"어댑터 {adapter.name!r} 는 fetch 를 구현하지 않았습니다."
+        )
+    return adapter.fetch(Path(path), node_id)
+
+
 def _register_builtin_adapters() -> None:
     _REGISTRY[DocFormat.HWPX] = OPCAdapter(
         name="hwpx",
@@ -287,6 +336,7 @@ def _register_builtin_adapters() -> None:
         strip=strip_to_text_nodes,
         embed=insert_mre_into_zip,
         exists=_mre_xml_exists_in_zip,
+        fetch=_hwpx_fetch,
     )
     _REGISTRY[DocFormat.DOCX] = OPCAdapter(
         name="docx",
@@ -294,6 +344,7 @@ def _register_builtin_adapters() -> None:
         strip=strip_to_text_nodes,
         embed=insert_mre_into_zip,   # mre.xml as a plain zip entry — 포맷 무관 동일 연산
         exists=_mre_xml_exists_in_zip,
+        fetch=_docx_fetch,
     )
 
 

@@ -1,7 +1,5 @@
 # mre
 
-[![Tests](https://github.com/Lactobacillus/open-mre/actions/workflows/tests.yml/badge.svg)](https://github.com/Lactobacillus/open-mre/actions/workflows/tests.yml)
-
 **Machine-Readable Extension (MRE)** — a producer-side document standard and
 navigation structure that lets LLM agents read a document precisely, instead
 of consuming its raw, markup-heavy source.
@@ -260,12 +258,25 @@ whose site adapter implements `fetch` (currently HTML/Wikipedia — see
 
 ## Supported document formats
 
-| Format | Parsing | Embedding | Fetch (`fetch_block`) |
+| Format | Parsing | Embedding | Fetch |
 |---|---|---|---|
-| HTML (Wikipedia) | built-in site adapter | `<script type="application/mre+xml">` inside `<head>` | yes |
-| HWPX | built-in | extra `mre.xml` entry in the zip archive | not yet |
-| DOCX | built-in (body paragraphs only — table cells are out of scope) | extra `mre.xml` entry in the zip archive | not yet |
+| HTML (Wikipedia) | built-in site adapter | `<script type="application/mre+xml">` inside `<head>` | `fetch_block()` |
+| HWPX | built-in | extra `mre.xml` entry in the zip archive | `fetch_opc()` |
+| DOCX | built-in (body paragraphs only — table cells are out of scope) | extra `mre.xml` entry in the zip archive | `fetch_opc()` |
 | PDF, HWP | detected (`detect_format`) | not implemented — `generate_mre()` raises `NotImplementedError` | not yet |
+
+HWPX/DOCX use a separate function, `fetch_opc(path, node_id, fmt)`, since (unlike HTML)
+there's no per-site adapter to pick — just a format:
+
+```python
+from mre import DocFormat, fetch_opc
+
+text = fetch_opc("pleasure_cove.hwpx", "p2", DocFormat.HWPX)
+```
+
+Same `"full"` sentinel and the same empty-string-on-miss / `FetchNotSupportedError`
+contract as `fetch_block()`. No generator-fingerprint check yet for this path
+(see [Detecting a stale adapter](#detecting-a-stale-adapter) — HTML-only for now).
 
 HTML support is a **site-adapter registry**, not a generic scraper — a page's
 usable structure differs too much site to site to parse generically. Only
