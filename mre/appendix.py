@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Wikipedia appendix section 필터 + 짧은 section 통합 — HTML 문서를 LLM에 보내기 전 정리한다.
 
@@ -11,6 +9,8 @@ data_utils/mre_generator3.py의 동명 섹션을 이 라이브러리 배포 경�
 생성 시점의 pid 순번과 fetch 시점의 walk 순번이 일치한다 (core/pipeline.py의 _fetch_blocks_v3
 가 실제로 이렇게 한다). 이 규칙이 어긋나면 pid 가 엉뚱한 블록을 가리키게 된다.
 """
+
+from __future__ import annotations
 
 import re
 

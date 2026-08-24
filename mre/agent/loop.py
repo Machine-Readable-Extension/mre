@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Progressive 루프 — metadata-only 2단계 공개 방식의 완성형 진입점(run_agent).
 
@@ -15,6 +13,8 @@ core/pipeline.py 의 MREAgent._run_progressive 를 이 라이브러리 배포 �
   - GuidedLLM(in-process vLLM)이 아니라 OpenAI-호환 client 하나로 동작한다
     (mre.agent.llm 참조) — mre.generate_mre() 와 동일한 관례.
 """
+
+from __future__ import annotations
 
 import html
 import json

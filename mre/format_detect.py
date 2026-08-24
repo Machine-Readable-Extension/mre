@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 문서 포맷 자동 감지 — 매직 바이트 기반.
 
@@ -8,6 +6,8 @@ from __future__ import annotations
 zip 계열(hwpx/docx)은 공통 PK 매직만으로는 구분이 안 되므로, zip을 열어
 내부 엔트리로 한 번 더 구분한다.
 """
+
+from __future__ import annotations
 
 import io
 import zipfile

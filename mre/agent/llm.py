@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 OpenAI-호환 client 하나로 action(JSON schema 강제) / 자유 텍스트 생성 둘 다 처리하는
 얇은 래퍼. mre.generate_mre() 와 동일한 관례 — client 와 model 은 호출자가 항상 넘긴다,
@@ -10,6 +8,8 @@ vLLM 버전(GuidedLLM — config.py 글로벌 상수 + 로컬 GPU 모델 로딩�
 않는다 — 로컬 vLLM 을 쓰고 싶으면 이미 OpenAI-호환 서버로 띄운 뒤 client 의 base_url 로
 가리키면 된다.
 """
+
+from __future__ import annotations
 
 import time
 

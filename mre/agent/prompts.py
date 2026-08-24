@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Progressive 루프의 프롬프트 — 인자 없이 바로 쓸 수 있는 완성된 상수 하나(SYSTEM_PROMPT)와,
 질문을 채워 넣어 재사용하는 작은 템플릿 하나(ANSWER_FORMAT).
@@ -11,6 +9,8 @@ long-form 벤치마크인지에 따라 "가장 짧은 정답만 출력" vs "완�
 구분 자체가 안 맞는다. 그래서 answer_format 같은 분기 파라미터 없이, 질문에 맞는 길이로
 답하라는 중립적인 문구 하나로 통일했다(길이는 모델이 질문을 보고 판단).
 """
+
+from __future__ import annotations
 
 import textwrap
 

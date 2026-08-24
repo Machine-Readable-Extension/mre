@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Progressive 2단계 공개 중 1단계(metadata-only) 뷰를 만드는 변환.
 
@@ -9,6 +7,8 @@ progressive 루프가 실제로 쓰는 건 <tree> 를 통째로 지우는 이 �
 전체 공개)는 별도 변환이 필요 없다 — mre 의 <mre> 스키마는 애초에 <section> 중첩이 없는
 flat tree라 원본 mre_xml 을 그대로 보여주면 된다.
 """
+
+from __future__ import annotations
 
 import re
 

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Misalignment detection & selective regeneration — paragraph granularity only.
 
@@ -17,6 +15,8 @@ unit_filter/unit_label/regen_system_prompt/regen_schema 를 매개변수화했�
 paragraph 전용이라 그 일반화는 걷어내고 paragraph 규칙(REGEN_SYSTEM_PROMPT/REGEN_JSON_SCHEMA/
 _paragraph_nodes)을 직접 사용한다.
 """
+
+from __future__ import annotations
 
 import logging
 import re

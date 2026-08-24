@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Progressive 루프의 4-action(expand_document/fetch_doc/fetch_blocks/answer, 그리고
 answer 가로채기 직후 한 턴만 쓰이는 check_sufficiency) guided-decoding JSON schema.
@@ -9,6 +7,8 @@ core/mre.py 의 build_progressive_action_schema/build_action_schema(check_suffic
 short-answer 전용 분기)는 뺐다 — EM 채점 벤치마크 전용 개념이라 일반 라이브러리에는 안
 맞는다(mre.agent.prompts 참조: 답변 형식도 SA/LA 구분 없이 중립 문구 하나로 통일했다).
 """
+
+from __future__ import annotations
 
 MAX_TURNS         = 12   # expand+fetch 가 한 세트라 hop 당 2턴 소모 — 6-hop 예산
 MAX_DOCS_PER_TURN = 3

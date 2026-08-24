@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 v2 MRE 생성 핵심 로직 — LLM 스키마/프롬프트와 실제 호출 (paragraph granularity only).
 
@@ -8,6 +6,8 @@ data_utils/mre_generator3.py의 생성 경로(문서 title + 단락 시퀀스를
 부여해 LLM 출력 토큰을 절감)를 이 라이브러리 배포 경계 안으로 옮겨왔다. section-granularity
 경로(--granularity section)는 포팅하지 않는다 — 필요해지면 별도로 추가한다.
 """
+
+from __future__ import annotations
 
 import logging
 import textwrap

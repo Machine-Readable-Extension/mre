@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Minimal MRE XML 조립 — LLM 출력(summary + headings/keywords 병렬 배열) + 원본 node 트리를
 결합해 <mre> 문서를 만든다. LLM 호출 없이 순수 문자열 조립만 한다.
@@ -8,6 +6,8 @@ data_utils/mre_generator3.py의 build_mre_xml2를 이 라이브러리 배포 경
 (이름은 build_mre_xml로 정리 — "2" 접미사는 mre_generator3.py 내부에서 v1과 구분하려던
 버전 표식이었는데, 이 라이브러리엔 v1이 없어 접미사가 그냥 잡음이 된다).
 """
+
+from __future__ import annotations
 
 from xml.sax.saxutils import escape as xml_escape
 

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 HTML MRE 생성 — 사이트(도메인)별 파싱 로직 dispatch.
 
@@ -13,6 +11,8 @@ HTML MRE 생성 — 사이트(도메인)별 파싱 로직 dispatch.
 ("mre.site_adapters" 그룹)로 설치된 어댑터를 임포트 시점에 자동 발견한다 —
 아래 "플러그인 자동 발견" 절 참조.
 """
+
+from __future__ import annotations
 
 import hashlib
 import inspect

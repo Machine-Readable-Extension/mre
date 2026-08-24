@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 포맷 감지(또는 명시적 지정) + 사이트/포맷 어댑터 dispatch + LLM 생성을 하나로
 묶은 최상위 진입점 — generate_mre().
@@ -11,6 +9,8 @@ model 이름을 직접 넘긴다. vLLM 같은 OpenAI-호환 백엔드도 base_ur
 
 지원 포맷: html, hwpx, docx. pdf/hwp는 아직 어댑터가 없어 NotImplementedError.
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path

@@ -1,10 +1,10 @@
-from __future__ import annotations
-
 """
 포맷 무관 node 정규화 — html/hwpx/docx 어댑터가 공통으로 쓰는 유일한 조각.
 
 data_utils/mre_generator.py(v1)의 동명 함수를 이 라이브러리 배포 경계 안으로 옮겨왔다.
 """
+
+from __future__ import annotations
 
 
 def strip_to_text_nodes(nodes: list[dict]) -> list[dict]:

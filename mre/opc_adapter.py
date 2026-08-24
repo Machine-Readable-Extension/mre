@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 OPC(Open Packaging Conventions) zip 컨테이너 기반 문서 어댑터 — hwpx, docx.
 
@@ -18,6 +16,8 @@ insert_mre_into_zip / _mre_xml_exists_in_zip 하나씩만 두고 공용으로 �
     흡수" 같은 규칙이 docx엔 없어 임의로 흡수시키면 표 순서가 뒤틀리므로,
     본문 흐름(body 직속 <w:p>)만 다룬다.
 """
+
+from __future__ import annotations
 
 import os
 import re

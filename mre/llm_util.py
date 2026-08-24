@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 LLM 호출 저수준 유틸리티 — 응답 파싱, 사용량/latency 집계, 컨텍스트 예산 계산, chunking.
 
@@ -7,6 +5,8 @@ data_utils/mre_generator.py(v1)에 있던 것과 동일한 로직을 이 라이�
 옮겨왔다 — mre 패키지의 나머지 모듈이 data_utils/에 의존하지 않도록 하기 위함. 비용
 리포팅(_build_cost_record 등, CLI 전용)은 포팅 대상이 아니다 — generate_mre()가 쓰지 않는다.
 """
+
+from __future__ import annotations
 
 import json
 import logging

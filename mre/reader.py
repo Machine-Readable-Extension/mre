@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Embed된 HTML에서 <mre> 헤더 원문을 통째로 다시 읽어오는 유틸리티 — fetch_block()(단락
 하나만 읽어오는)의 대칭점. 사이트 어댑터 dispatch가 필요 없다 — 어떤 사이트가 만들었든
@@ -8,6 +6,8 @@ Embed된 HTML에서 <mre> 헤더 원문을 통째로 다시 읽어오는 유틸�
 
 core/mre.py의 MREParser.extract_mre를 이 라이브러리 배포 경계 안으로 옮겨왔다.
 """
+
+from __future__ import annotations
 
 import re
 
