@@ -1,20 +1,18 @@
-"""
-Progressive 루프의 프롬프트 — 인자 없이 바로 쓸 수 있는 완성된 상수 하나(SYSTEM_PROMPT)와,
-질문을 채워 넣어 재사용하는 작은 템플릿 하나(ANSWER_FORMAT).
+"""Prompts for the progressive loop.
 
-core/mre.py 의 _MRE_BASE_PROGRESSIVE + PROGRESSIVE_SA_FORMAT/_LA_ANSWER_FORMAT 을 이
-라이브러리 배포 경계 안으로 옮겨왔다. 원본은 데이터셋이 short-answer(EM 채점) 벤치마크인지
-long-form 벤치마크인지에 따라 "가장 짧은 정답만 출력" vs "완전한 문장으로 서술" 둘 중
-하나를 강제하는 두 갈래 ANSWER FORMAT 을 썼다 — 일반 사용자는 EM 채점 대상이 아니라 이
-구분 자체가 안 맞는다. 그래서 answer_format 같은 분기 파라미터 없이, 질문에 맞는 길이로
-답하라는 중립적인 문구 하나로 통일했다(길이는 모델이 질문을 보고 판단).
+``SYSTEM_PROMPT`` is a ready-to-use constant taking no arguments.
+``ANSWER_FORMAT`` is a small ``.format(query=...)`` template, reused both
+for the initial user message and for re-display after each fetch response.
+There's no short-answer/long-form mode switch: the agent is told to answer
+in whatever length the question calls for, and judges that itself.
 """
 
 from __future__ import annotations
 
 import textwrap
 
-# 도구 설명 + 워크플로 — 질문에 의존하지 않는 정적 텍스트라 SYSTEM_PROMPT 그대로 노출된다.
+# Tool descriptions + workflow — static text that doesn't depend on the
+# question, so it's exposed as-is.
 SYSTEM_PROMPT = textwrap.dedent("""
 You are an autonomous research agent specialized in precise information extraction from structured web documents. Your primary objective is to accurately answer user queries by navigating pre-loaded document structures.
 
@@ -96,9 +94,10 @@ Step 4: Execute the `answer` tool to output your final response.
 
 CRITICAL RULE: You MUST retrieve actual document content — via `fetch_blocks` (after `expand_document`) or via `fetch_doc` — at least once before calling `answer`. Never answer based on MRE metadata alone.""").strip()
 
-# 질문(query)을 채워 넣어 재사용하는 작은 템플릿 — 최초 user 메시지, 그리고 매 fetch 응답
-# 직후 재노출 둘 다에 동일하게 쓰인다("질문을 매 턴 다시 보여주면 멀티홉 조기 답변이
-# 줄어든다"는 관찰을 일반화한 것 — core/mre.py PROGRESSIVE_SA_FORMAT 참조).
+# Small template filled in with the question — reused both for the initial
+# user message and for re-display right after every fetch response.
+# Re-showing the question each turn keeps the agent from answering
+# prematurely partway through a multi-hop chain.
 ANSWER_FORMAT = textwrap.dedent("""
 ── ANSWER FORMAT ─────────────────────────────────────────────────────
 Answer the question using only the information in the retrieved

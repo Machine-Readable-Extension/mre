@@ -1,9 +1,5 @@
-"""
-LLM 호출 저수준 유틸리티 — 응답 파싱, 사용량/latency 집계, 컨텍스트 예산 계산, chunking.
-
-data_utils/mre_generator.py(v1)에 있던 것과 동일한 로직을 이 라이브러리 배포 경계 안으로
-옮겨왔다 — mre 패키지의 나머지 모듈이 data_utils/에 의존하지 않도록 하기 위함. 비용
-리포팅(_build_cost_record 등, CLI 전용)은 포팅 대상이 아니다 — generate_mre()가 쓰지 않는다.
+"""Low-level LLM call utilities: response parsing, usage/latency
+accounting, context budget calculation, and chunking.
 """
 
 from __future__ import annotations
@@ -19,10 +15,10 @@ log = logging.getLogger(__name__)
 # ─────────────────────────────────────────────
 # Token budget constants
 # ─────────────────────────────────────────────
-MAX_TOKENS = 16384             # 요청 가능 출력 토큰 상한 (모델 컨텍스트가 허락하는 한)
-MODEL_CTX = 32768               # 기본 모델 컨텍스트 길이 — 실제 모델에 맞춰 호출자가 override
-TOKEN_SAFETY_MARGIN = 512       # chat 템플릿/역마진
-MIN_OUTPUT_TOKENS = 2048        # 이보다 작으면 입력 과다로 판단해 스킵
+MAX_TOKENS = 16384              # requestable output token cap (as far as the model context allows)
+MODEL_CTX = 32768                # default model context length — callers override to match their model
+TOKEN_SAFETY_MARGIN = 512        # chat-template / rounding margin
+MIN_OUTPUT_TOKENS = 2048         # below this, input is judged too large and generation is skipped
 
 
 def _parse_openai_response(raw: str) -> dict:
@@ -40,7 +36,7 @@ def _extract_content(response, label: str, requested_max: int) -> str:
 
 
 def _new_stats() -> dict:
-    """LLM 호출 비용 누적기(토큰/호출수/latency)."""
+    """A fresh accumulator for LLM call cost: tokens, call count, latency."""
     return {"prompt_tokens": 0, "completion_tokens": 0, "llm_calls": 0, "llm_latency_sec": 0.0}
 
 
@@ -59,19 +55,19 @@ def _merge_stats(dst: dict, src: dict) -> None:
 
 
 def _estimate_tokens(text: str) -> int:
-    """Conservative token estimate (~3 chars/token, mixed EN/KO 안전치)."""
+    """Conservative token estimate (~3 chars/token, safe for mixed EN/KO text)."""
     return len(text) // 3
 
 
 def _compute_max_output(messages: list[dict], model_ctx: int) -> int:
-    """입력 추정치를 빼고 남는 출력 토큰 한도. MAX_TOKENS로 캡."""
-    input_est = sum(_estimate_tokens(m["content"]) for m in messages) + 100  # 채팅 템플릿 오버헤드
+    """Output token budget remaining after the estimated input, capped at MAX_TOKENS."""
+    input_est = sum(_estimate_tokens(m["content"]) for m in messages) + 100  # chat-template overhead
     available = model_ctx - input_est - TOKEN_SAFETY_MARGIN
     return min(MAX_TOKENS, available)
 
 
 class _InputTooLarge(Exception):
-    """입력이 모델 컨텍스트를 거의 다 먹어서 출력 여유가 없을 때 발생."""
+    """Raised when the input alone leaves too little room for output."""
 
 
 def _resolve_max_tokens(messages: list[dict], model_ctx: int, label: str) -> int:
@@ -86,12 +82,19 @@ def _resolve_max_tokens(messages: list[dict], model_ctx: int, label: str) -> int
 
 
 # ─────────────────────────────────────────────
-# Chunk-budget-only 참조 프롬프트 (v1) — 실제 생성 호출에는 절대 쓰지 않는다.
+# Reference prompt used ONLY for chunk-budget estimation — never sent as
+# the actual generation call.
 # ─────────────────────────────────────────────
-# data_utils/mre_generator.py(v1)의 SYSTEM_PROMPT/build_user_prompt 를 그대로 옮겨왔다.
-# 용도는 오직 _chunk_p_nodes_by_token_budget() 의 고정 오버헤드 추정 — 위 docstring 참조.
+# Used only to estimate each chunk's fixed prompt overhead in
+# _chunk_p_nodes_by_token_budget() below — never sent to the model. It's
+# longer than the real generation prompt (generation.py's SYSTEM_PROMPT),
+# so the resulting chunks come out a little smaller than strictly
+# necessary. That's a safe direction to be wrong in: the cost is a few
+# extra LLM calls on very large documents, not a chunk that silently
+# overflows the model's context. With a generously sized model_ctx, most
+# documents fit in a single chunk anyway and this estimate never matters.
 
-_V1_BUDGET_SYSTEM_PROMPT = textwrap.dedent("""
+_BUDGET_ESTIMATE_SYSTEM_PROMPT = textwrap.dedent("""
 You are an expert technical document analyst and structural metadata engineer. Your task is to generate a Machine-Readable Extension (MRE)—a highly structured, hierarchical JSON header—for a given HTML document.
 
 You will be provided with:
@@ -137,7 +140,7 @@ Strict Rules & Constraints:
 ).strip()
 
 
-def _v1_budget_user_prompt(url_hint: str, p_nodes: list[dict]) -> str:
+def _budget_estimate_user_prompt(url_hint: str, p_nodes: list[dict]) -> str:
     lines = [f"Document URL/hint: {url_hint}\n", "Nodes:"]
     para_idx = 0
     for node in p_nodes:
@@ -156,47 +159,48 @@ def _chunk_p_nodes_by_token_budget(
     title: str,
     model_ctx: int,
 ) -> list[list[dict]]:
-    """p_nodes(heading+paragraph 혼합 리스트)를 LLM 입력 예산에 맞춰 분할한다.
+    """Split ``p_nodes`` (a mixed heading+paragraph list) to fit the LLM input budget.
 
-    chunk 경계에서는 현재 open된 heading 스택을 다음 chunk의 prefix로 replay해
-    LLM이 섹션 컨텍스트를 잃지 않도록 한다 (heading은 id가 없어 중복돼도 안전).
+    At each chunk boundary, the stack of currently-open headings is
+    replayed as the next chunk's prefix, so the LLM doesn't lose section
+    context (headings have no `id`, so duplicating them across chunks is
+    safe).
 
-    고정 오버헤드(fixed_messages) 추정에 실제 호출 프롬프트(SYSTEM_PROMPT 등)가 아니라
-    _V1_BUDGET_SYSTEM_PROMPT/_v1_budget_user_prompt(v1 mre_generator.py 의 SYSTEM_PROMPT/
-    build_user_prompt 그대로)를 쓴다 — data_utils/mre_generator3.py 가 이 chunker를 v1에서
-    변경 없이 그대로 재사용하기 때문. v1 프롬프트가 v2보다 길어 추정치가 다소 보수적(청크가
-    약간 작아짐)이지만, mre_generator3.py 와 청크 경계를 정확히 동일하게 재현하려면 이
-    근사를 그대로 따라야 한다 — model_ctx 가 큰 실제 운용에서는 문서가 대부분 단일 청크로
-    처리돼 영향이 없다.
+    Args:
+        p_nodes: Heading/paragraph nodes in document order.
+        title: Document title, used to estimate the fixed prompt overhead.
+        model_ctx: Model context length to budget against.
 
-    Returns
-    -------
-    list[list[dict]] : 각 chunk는 자체적으로 LLM에 보낼 수 있는 p_nodes 슬라이스.
-                       단일 호출이 가능하면 [p_nodes] 단일 원소 리스트.
+    Returns:
+        A list of chunks, each a slice of ``p_nodes`` that can be sent to
+        the LLM on its own. A single-element list (``[p_nodes]``) if one
+        call suffices.
     """
     fixed_messages = [
-        {"role": "system", "content": _V1_BUDGET_SYSTEM_PROMPT},
-        {"role": "user",   "content": _v1_budget_user_prompt(title, [])},
+        {"role": "system", "content": _BUDGET_ESTIMATE_SYSTEM_PROMPT},
+        {"role": "user",   "content": _budget_estimate_user_prompt(title, [])},
     ]
     fixed_input_tok  = sum(_estimate_tokens(m["content"]) for m in fixed_messages) + 100
     output_reserve   = MIN_OUTPUT_TOKENS + TOKEN_SAFETY_MARGIN
     nodes_budget     = model_ctx - fixed_input_tok - output_reserve
 
     if nodes_budget <= 0:
-        # 시스템 프롬프트만으로도 컨텍스트가 가득 찰 정도면 chunking 불가.
+        # The system prompt alone fills the context — chunking can't help.
         return [p_nodes]
 
     def _node_tok(n: dict) -> int:
-        # 위치 인덱스/개행 등 구조 오버헤드 근사치 — 실측 대신 고정 padding(보수적, 안전 방향).
+        # Fixed padding approximates per-node structural overhead (index
+        # markers, newlines, ...) — conservative rather than exact.
         return _estimate_tokens(n.get("text", "")) + 30
 
     chunks: list[list[dict]] = []
     current: list[dict] = []
     current_tok = 0
-    open_headings: list[dict] = []  # 현재 열려있는 heading 중첩 스택 (level 단조 증가)
+    open_headings: list[dict] = []  # stack of currently-open headings (levels increase monotonically)
 
     for node in p_nodes:
-        # heading 스택 갱신은 split 결정 *전에* 수행해야 다음 chunk replay에 반영됨.
+        # The heading stack must be updated *before* the split decision
+        # below, so the update is reflected in the next chunk's replay.
         if node.get("type") == "heading":
             level = node.get("level", 1)
             while open_headings and open_headings[-1].get("level", 1) >= level:
@@ -206,10 +210,11 @@ def _chunk_p_nodes_by_token_budget(
         ntok = _node_tok(node)
 
         if current_tok + ntok > nodes_budget and current:
-            # 현재 chunk를 닫는다. paragraph가 하나도 없으면(전부 heading) 버린다.
+            # Close the current chunk. Drop it if it has no paragraphs at all (headings only).
             if any(n.get("type") == "paragraph" for n in current):
                 chunks.append(current)
-            # 새 chunk 시작 — heading replay (지금 추가하려는 노드가 heading이면 그 자신은 제외)
+            # Start a new chunk, replaying open headings (excluding the
+            # node about to be added, if it's itself a heading).
             if node.get("type") == "heading":
                 replay = list(open_headings[:-1])
             else:

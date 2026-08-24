@@ -1,10 +1,10 @@
-"""
-v2 MRE 생성 핵심 로직 — LLM 스키마/프롬프트와 실제 호출 (paragraph granularity only).
+"""Core MRE generation logic — LLM schema/prompt and the calls themselves.
 
-data_utils/mre_generator3.py의 생성 경로(문서 title + 단락 시퀀스를 입력받아 문서 summary +
-단락별 heading/keywords 두 병렬 배열을 생성 — id는 코드가 입력 단락 순서에 맞춰 기계적으로
-부여해 LLM 출력 토큰을 절감)를 이 라이브러리 배포 경계 안으로 옮겨왔다. section-granularity
-경로(--granularity section)는 포팅하지 않는다 — 필요해지면 별도로 추가한다.
+Paragraph granularity only: the document title and paragraph sequence go
+in, and a document summary plus two parallel per-paragraph arrays
+(headings, keywords) come out. The paragraph `id`s themselves are assigned
+mechanically from input order by the calling code, not by the LLM, to
+save output tokens.
 """
 
 from __future__ import annotations
@@ -30,13 +30,15 @@ log = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────
-# Schema (v2): nodes only, no summary/tags/lang wrapper — parallel arrays instead
+# Schema: a document-level summary plus two parallel per-paragraph arrays
 # ─────────────────────────────────────────────
 
-# document-level summary + two parallel arrays (no node wrapper, no id).
-# id 는 후처리에서 입력 단락 순서에 맞춰 기계적으로 부여 (LLM 생성 비용 절감).
-# headings[i] 와 keywords[i] 가 i-번째 입력 단락과 매핑. 두 배열 길이는 입력 단락 수와 일치.
-# summary 는 doc-level 항해 신호 — agent 가 단락 fetch 전에 doc 적합성 판단할 때 사용.
+# headings[i] and keywords[i] both describe the i-th input paragraph, so
+# both arrays have exactly as many entries as there are input paragraphs.
+# The `id` for each paragraph isn't part of this schema — it's assigned
+# afterward from input order, which saves LLM output tokens. `summary` is
+# the document-level relevance signal an agent uses to decide whether to
+# fetch from this document before reading any individual paragraph.
 MRE_JSON_SCHEMA = {
     "type": "object",
     "properties": {
@@ -130,7 +132,18 @@ Strict Rules & Constraints:
 
 
 def build_user_prompt(title: str, p_nodes: list[dict]) -> str:
-    """v2 입력: 문서 제목 + 섹션 헤딩 + 단락 (텍스트만, id는 미포함)."""
+    """Build the LLM input: document title + section headings + paragraphs.
+
+    Paragraph `id`s are omitted — the LLM never generates them, so they
+    aren't needed in the input either.
+
+    Args:
+        title: Document title.
+        p_nodes: Heading/paragraph nodes in document order.
+
+    Returns:
+        The formatted prompt text.
+    """
     lines = [f"Document title: {title}", "", "Nodes:"]
     para_idx = 0
     for node in p_nodes:
@@ -139,8 +152,7 @@ def build_user_prompt(title: str, p_nodes: list[dict]) -> str:
             lines.append(f"\n{prefix} {node['text']}")
         else:
             para_idx += 1
-            # v2: id 는 출력 안 함 (LLM 이 id 생성 안 하므로 입력에도 불필요).
-            # [N] 번호가 출력 array 의 인덱스와 1:1 매핑된다.
+            # The [N] numbering maps 1:1 to the output arrays' indices.
             lines.append(f"\n[{para_idx}] {node['text']}")
     return "\n".join(lines)
 
@@ -188,9 +200,11 @@ async def call_llm_async(
 
 
 def _merge_llm_chunks(chunk_results: list[dict]) -> dict:
-    """v2 응답 병합 — summary 는 chunk별로 \\n\\n 로 이어붙이고, headings/keywords 두
-    배열은 chunk 순서대로 concat. 각 chunk 가 자신의 단락 순서대로 배열을 생성했으므로
-    단순 concat 으로 문서 전체 순서가 보존된다 (chunk_results 가 원본 chunk 순서와 일치).
+    """Merge per-chunk responses: join summaries with blank lines, and
+    concatenate the headings/keywords arrays in chunk order. Since each
+    chunk produces its arrays in its own paragraph order, and
+    ``chunk_results`` is in original chunk order, a plain concat preserves
+    the whole document's paragraph order.
     """
     merged_headings: list[str] = []
     merged_keywords: list[str] = []
@@ -217,9 +231,9 @@ async def call_llm_chunked_async(
     guided: bool = False,
     model_ctx: int = MODEL_CTX,
 ) -> tuple[dict, dict]:
-    """입력이 model_ctx 초과 시 paragraph 단위로 chunk → 호출 → merge.
-    chunker 자체는 v1 예산 추정을 그대로 재사용(_chunk_p_nodes_by_token_budget 참조) —
-    mre_generator3.py가 이 chunker를 v1에서 변경 없이 재사용하는 것과 동일한 근사."""
+    """If the input exceeds ``model_ctx``, split it into paragraph-sized
+    chunks, call the LLM on each, and merge the results back together.
+    """
     chunks = _chunk_p_nodes_by_token_budget(p_nodes, title, model_ctx)
     if len(chunks) == 1:
         return await call_llm_async(
