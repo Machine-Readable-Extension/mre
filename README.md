@@ -1,5 +1,7 @@
 # mre
 
+[![Tests](https://github.com/Lactobacillus/open-mre/actions/workflows/tests.yml/badge.svg)](https://github.com/Lactobacillus/open-mre/actions/workflows/tests.yml)
+
 **Machine-Readable Extension (MRE)** — a producer-side document standard and
 navigation structure that lets LLM agents read a document precisely, instead
 of consuming its raw, markup-heavy source.
