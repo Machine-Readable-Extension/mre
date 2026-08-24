@@ -82,10 +82,12 @@ chasing a multi-hop query. Paragraph text itself is *not* in the header —
 it's fetched on demand by ID from the source document, by a separate
 retrieval-side parser.
 
-In papers reporting on MRE-based agentic RAG, this design yielded up to a
-48.4% relative F1 improvement over baselines on multi-hop QA benchmarks,
-by letting the agent target the right paragraph instead of reading (or
-missing) it inside a long, noisy context.
+Early experiments on MRE-based agentic RAG show up to a 48.4% relative F1
+improvement over baselines on multi-hop QA benchmarks, by letting the agent
+target the right paragraph instead of reading (or missing) it inside a
+long, noisy context. Write-up is in progress (not yet on arXiv); benchmark
+and evaluation code lives at
+[Lactobacillus/machine-readable-extension](https://github.com/Lactobacillus/machine-readable-extension).
 
 ## Install
 
