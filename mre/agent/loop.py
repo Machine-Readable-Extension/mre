@@ -100,6 +100,194 @@ def _fetch_blocks(params_list: list[dict], docs: dict[str, dict]) -> str:
     return "\n\n".join(results)
 
 
+@dataclass
+class _LoopState:
+    """run_agent() 턴 반복 동안 누적되는 가변 상태 -- 액션 핸들러들이 공유해서 읽고 쓴다.
+    run_agent() 바깥에 노출되지 않는 내부 전용 컨테이너(AgentResult 와는 별개)."""
+    messages: list[dict]
+    expanded_titles: set[str] = field(default_factory=set)
+    retrieved_blocks: list[str] = field(default_factory=list)
+    action_log: list[dict] = field(default_factory=list)
+    seen_fetches: set[tuple[str, str]] = field(default_factory=set)
+    # answer 가로채기로 보류 중인 초안 -- None 이 아니면 다음 턴은 check_sufficiency 만 허용.
+    pending_answer_content: str | None = None
+    num_turns: int = 0
+    stats: dict = field(default_factory=_new_stats)
+
+
+def _handle_expand_document(
+    state: _LoopState, action: dict, raw_action: str, docs: dict[str, dict], raw_mre_cache: dict[str, str],
+) -> None:
+    titles_req = action.get("titles", [])[:MAX_DOCS_PER_TURN]
+    newly_expanded: list[str] = []
+    for t in titles_req:
+        nt = _normalize_title(t)
+        if nt not in docs or nt in state.expanded_titles:
+            continue
+        state.expanded_titles.add(nt)
+        newly_expanded.append(f"[{nt} MRE — expanded]\n{raw_mre_cache[nt]}")
+
+    state.messages.append({"role": "assistant", "content": raw_action})
+    if newly_expanded:
+        state.messages.append({"role": "user", "content": (
+            "[expanded document structure]\n" + "\n\n".join(newly_expanded) +
+            "\n\nSelect paragraph ids with fetch_blocks, or expand another document."
+        )})
+    else:
+        state.messages.append({"role": "user", "content": (
+            "[System] No new document was expanded (title already expanded, or "
+            "not a valid candidate). Expand a different document, or call "
+            "fetch_blocks on an already-expanded document."
+        )})
+
+
+def _handle_fetch_doc(
+    state: _LoopState, action: dict, raw_action: str, docs: dict[str, dict], query: str,
+) -> None:
+    """metadata 만 보고 문서 전체가 필요하다고 판단한 경우."""
+    titles_req = action.get("titles", [])[:MAX_DOCS_PER_TURN]
+    requested_pairs = {(_normalize_title(t), "full") for t in titles_req}
+    new_pairs = requested_pairs - state.seen_fetches
+    if not new_pairs:
+        state.messages.append({"role": "assistant", "content": raw_action})
+        state.messages.append({"role": "user", "content": (
+            "[System] All requested document(s) were already fetched in full in "
+            "earlier turns; re-fetching does not add new information. Either "
+            "fetch_doc a DIFFERENT document, expand_document/fetch_blocks a "
+            "specific paragraph, or output an `answer` action."
+        )})
+        return
+
+    params_list = [{"title": t, "requests": ["full"]} for t, _ in new_pairs if t in docs]
+    if not params_list:
+        state.messages.append({"role": "assistant", "content": raw_action})
+        state.messages.append({"role": "user", "content": (
+            "[System] None of the requested titles are valid candidate documents. "
+            "Choose a title from the available documents list."
+        )})
+        return
+
+    block_text = _fetch_blocks(params_list, docs)
+    state.seen_fetches |= new_pairs
+    state.retrieved_blocks.append(block_text)
+
+    state.messages.append({"role": "assistant", "content": raw_action})
+    state.messages.append({"role": "user", "content": (
+        f"[full document text]\n{block_text}\n\n"
+        f"{ANSWER_FORMAT.format(query=query)}\n"
+        "If not, request other documents or paragraphs."
+    )})
+
+
+def _handle_fetch_blocks(
+    state: _LoopState, action: dict, raw_action: str, docs: dict[str, dict], query: str,
+) -> None:
+    params_list = action.get("parameters", [])[:MAX_DOCS_PER_TURN]
+    for p in params_list:
+        if isinstance(p.get("requests"), list):
+            p["requests"] = p["requests"][:MAX_PIDS_PER_DOC]
+
+    requested_pairs: set[tuple[str, str]] = set()
+    for p in params_list:
+        t_norm = _normalize_title(p.get("title", ""))
+        for pid in p.get("requests", []):
+            requested_pairs.add((t_norm, pid))
+
+    if requested_pairs and requested_pairs.issubset(state.seen_fetches):
+        state.messages.append({"role": "assistant", "content": raw_action})
+        state.messages.append({"role": "user", "content": (
+            "[System] All requested blocks were already fetched in earlier turns; "
+            "re-fetching does not add new information. Either request DIFFERENT "
+            "blocks (different doc/id, expanding a new document if needed) or "
+            "output an `answer` action using the blocks you already have."
+        )})
+        return
+
+    block_text = _fetch_blocks(params_list, docs)
+    state.seen_fetches |= requested_pairs
+    state.retrieved_blocks.append(block_text)
+
+    state.messages.append({"role": "assistant", "content": raw_action})
+    state.messages.append({"role": "user", "content": (
+        f"[returned block(s)]\n{block_text}\n\n"
+        f"{ANSWER_FORMAT.format(query=query)}\n"
+        "If not, request other blocks (expand another document if needed)."
+    )})
+
+
+def _handle_check_sufficiency(state: _LoopState, action: dict, raw_action: str) -> AgentResult | None:
+    """answer 가로채기 직후에만 등장. 충분하다고 확인되면 여기서 최종 AgentResult 를 반환한다."""
+    is_sufficient = bool(action.get("is_sufficient"))
+    missing = (action.get("missing") or "").strip()
+    state.messages.append({"role": "assistant", "content": raw_action})
+    if is_sufficient:
+        return AgentResult(
+            answer=state.pending_answer_content or "",
+            retrieved_context="\n\n".join(state.retrieved_blocks),
+            num_turns=state.num_turns, success=True,
+            action_log=state.action_log, messages=state.messages, stats=state.stats,
+        )
+    state.messages.append({"role": "user", "content": (
+        f"[System] Noted as insufficient (missing: {missing!r}). "
+        "Retrieve the missing information (expand another document, fetch_doc, "
+        "or fetch_blocks), then try answering again."
+    )})
+    state.pending_answer_content = None
+    return None
+
+
+def _handle_answer(state: _LoopState, action: dict, raw_action: str) -> None:
+    if not state.retrieved_blocks:
+        state.messages.append({"role": "assistant", "content": raw_action})
+        state.messages.append({"role": "user", "content": (
+            "[System] You must retrieve actual document content first — either "
+            "expand a document and call fetch_blocks with relevant paragraph ids, "
+            "or call fetch_doc directly if the whole document is needed."
+        )})
+        return
+
+    # 프롬프트에 미리 알리지 않고, 모델이 낸 answer 초안을 가로채 그 내용 자체를
+    # 근거로 check_sufficiency 를 되묻는다 — 다음 턴은 CHECK_SUFFICIENCY_SCHEMA 로 고정.
+    draft_content = action.get("content", "")
+    state.messages.append({"role": "assistant", "content": raw_action})
+    state.messages.append({"role": "user", "content": (
+        "[System] Before finalizing, verify: does the evidence you've "
+        f"retrieved explicitly and fully support this answer — \"{draft_content}\"? "
+        "Call check_sufficiency: if fully supported, set is_sufficient=true; "
+        "if something is missing or unverified, set is_sufficient=false and "
+        "describe exactly what's missing in `missing`."
+    )})
+    state.pending_answer_content = draft_content
+
+
+async def _forced_fallback_answer(
+    state: _LoopState, query: str, client: openai.AsyncOpenAI, model: str,
+) -> AgentResult:
+    """턴 한도 도달 -- 누적 블록만으로 강제 답변(자유 텍스트, JSON 액션 아님)."""
+    fallback_instruction = (
+        "[System] No more retrieval rounds available. Using ONLY the blocks "
+        "fetched so far, give the answer to the question. Output the answer "
+        "text only — no JSON, no other words.\n"
+        f"Question: {query}"
+    )
+    state.messages.append({"role": "user", "content": fallback_instruction})
+    try:
+        final_answer, call_stats = await _llm.generate_text(client, model, state.messages, max_tokens=512)
+        _merge_stats(state.stats, call_stats)
+    except Exception as e:
+        final_answer = ""
+        fallback_err = f"forced-answer 생성 실패: {e}"
+    else:
+        fallback_err = "max_turns 초과 — 누적 블록으로 강제 답변"
+    state.action_log.append({"turn": state.num_turns, "action": "forced_answer", "raw": final_answer})
+
+    return AgentResult(
+        answer=final_answer, retrieved_context="\n\n".join(state.retrieved_blocks),
+        num_turns=state.num_turns, success=bool(final_answer), error=fallback_err,
+        action_log=state.action_log, messages=state.messages, stats=state.stats,
+    )
+
+
 async def run_agent(
     query: str,
     docs: dict[str, dict],
@@ -135,7 +323,7 @@ async def run_agent(
         metadata_parts.append(f"[{title} MRE]\n{metadata_view(raw_mre)}")
     all_metadata_text = "\n\n".join(metadata_parts)
 
-    messages: list[dict] = [
+    state = _LoopState(messages=[
         {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "user",
@@ -145,223 +333,63 @@ async def run_agent(
                 f"{ANSWER_FORMAT.format(query=query)}"
             ),
         },
-    ]
-
-    expanded_titles: set[str] = set()
-    retrieved_blocks: list[str] = []
-    action_log: list[dict] = []
-    seen_fetches: set[tuple[str, str]] = set()
-    # answer 가로채기로 보류 중인 초안 — None 이 아니면 다음 턴은 check_sufficiency 만 허용.
-    pending_answer_content: str | None = None
-    num_turns = 0
-    stats = _new_stats()
+    ])
 
     for _ in range(max_turns):
-        num_turns += 1
+        state.num_turns += 1
 
-        if pending_answer_content is not None:
+        if state.pending_answer_content is not None:
             turn_schema = CHECK_SUFFICIENCY_SCHEMA
         else:
             turn_schema = build_progressive_action_schema(
                 normalized_titles,
-                has_expanded=bool(expanded_titles),
-                has_retrieved=bool(retrieved_blocks),
+                has_expanded=bool(state.expanded_titles),
+                has_retrieved=bool(state.retrieved_blocks),
             )
 
-        raw_action, call_stats = await _llm.generate_action(client, model, messages, turn_schema)
-        _merge_stats(stats, call_stats)
+        raw_action, call_stats = await _llm.generate_action(client, model, state.messages, turn_schema)
+        _merge_stats(state.stats, call_stats)
 
         try:
             action, _ = json.JSONDecoder().raw_decode(raw_action.strip())
         except json.JSONDecodeError:
-            action_log.append({"turn": num_turns, "action": "parse_error", "raw": raw_action})
+            state.action_log.append({"turn": state.num_turns, "action": "parse_error", "raw": raw_action})
             return AgentResult(
-                answer="", retrieved_context="\n\n".join(retrieved_blocks),
-                num_turns=num_turns, success=False,
+                answer="", retrieved_context="\n\n".join(state.retrieved_blocks),
+                num_turns=state.num_turns, success=False,
                 error=f"JSON 파싱 실패: {raw_action[:300]}",
-                action_log=action_log, messages=messages, stats=stats,
+                action_log=state.action_log, messages=state.messages, stats=state.stats,
             )
 
         act = action.get("action")
-        action_log.append({"turn": num_turns, "action": act, "raw": raw_action})
+        state.action_log.append({"turn": state.num_turns, "action": act, "raw": raw_action})
 
-        # ── expand_document ──
         if act == "expand_document":
-            titles_req = action.get("titles", [])[:MAX_DOCS_PER_TURN]
-            newly_expanded: list[str] = []
-            for t in titles_req:
-                nt = _normalize_title(t)
-                if nt not in docs or nt in expanded_titles:
-                    continue
-                expanded_titles.add(nt)
-                newly_expanded.append(f"[{nt} MRE — expanded]\n{raw_mre_cache[nt]}")
-
-            messages.append({"role": "assistant", "content": raw_action})
-            if newly_expanded:
-                messages.append({"role": "user", "content": (
-                    "[expanded document structure]\n" + "\n\n".join(newly_expanded) +
-                    "\n\nSelect paragraph ids with fetch_blocks, or expand another document."
-                )})
-            else:
-                messages.append({"role": "user", "content": (
-                    "[System] No new document was expanded (title already expanded, or "
-                    "not a valid candidate). Expand a different document, or call "
-                    "fetch_blocks on an already-expanded document."
-                )})
-            continue
-
-        # ── fetch_doc: metadata 만 보고 문서 전체가 필요하다고 판단한 경우 ──
-        if act == "fetch_doc":
-            titles_req = action.get("titles", [])[:MAX_DOCS_PER_TURN]
-            requested_pairs = {(_normalize_title(t), "full") for t in titles_req}
-            new_pairs = requested_pairs - seen_fetches
-            if not new_pairs:
-                messages.append({"role": "assistant", "content": raw_action})
-                messages.append({"role": "user", "content": (
-                    "[System] All requested document(s) were already fetched in full in "
-                    "earlier turns; re-fetching does not add new information. Either "
-                    "fetch_doc a DIFFERENT document, expand_document/fetch_blocks a "
-                    "specific paragraph, or output an `answer` action."
-                )})
-                continue
-
-            params_list = [{"title": t, "requests": ["full"]} for t, _ in new_pairs if t in docs]
-            if not params_list:
-                messages.append({"role": "assistant", "content": raw_action})
-                messages.append({"role": "user", "content": (
-                    "[System] None of the requested titles are valid candidate documents. "
-                    "Choose a title from the available documents list."
-                )})
-                continue
-
-            block_text = _fetch_blocks(params_list, docs)
-            seen_fetches |= new_pairs
-            retrieved_blocks.append(block_text)
-
-            messages.append({"role": "assistant", "content": raw_action})
-            messages.append({"role": "user", "content": (
-                f"[full document text]\n{block_text}\n\n"
-                f"{ANSWER_FORMAT.format(query=query)}\n"
-                "If not, request other documents or paragraphs."
-            )})
-            continue
-
-        # ── fetch_blocks ──
-        if act == "fetch_blocks":
-            params_list = action.get("parameters", [])[:MAX_DOCS_PER_TURN]
-            for p in params_list:
-                if isinstance(p.get("requests"), list):
-                    p["requests"] = p["requests"][:MAX_PIDS_PER_DOC]
-
-            requested_pairs: set[tuple[str, str]] = set()
-            for p in params_list:
-                t_norm = _normalize_title(p.get("title", ""))
-                for pid in p.get("requests", []):
-                    requested_pairs.add((t_norm, pid))
-
-            if requested_pairs and requested_pairs.issubset(seen_fetches):
-                messages.append({"role": "assistant", "content": raw_action})
-                messages.append({"role": "user", "content": (
-                    "[System] All requested blocks were already fetched in earlier turns; "
-                    "re-fetching does not add new information. Either request DIFFERENT "
-                    "blocks (different doc/id, expanding a new document if needed) or "
-                    "output an `answer` action using the blocks you already have."
-                )})
-                continue
-
-            block_text = _fetch_blocks(params_list, docs)
-            seen_fetches |= requested_pairs
-            retrieved_blocks.append(block_text)
-
-            messages.append({"role": "assistant", "content": raw_action})
-            messages.append({"role": "user", "content": (
-                f"[returned block(s)]\n{block_text}\n\n"
-                f"{ANSWER_FORMAT.format(query=query)}\n"
-                "If not, request other blocks (expand another document if needed)."
-            )})
-            continue
-
-        # ── check_sufficiency: answer 가로채기 직후에만 등장 ──
-        if act == "check_sufficiency":
-            is_sufficient = bool(action.get("is_sufficient"))
-            missing = (action.get("missing") or "").strip()
-            messages.append({"role": "assistant", "content": raw_action})
-            if is_sufficient:
-                return AgentResult(
-                    answer=pending_answer_content or "",
-                    retrieved_context="\n\n".join(retrieved_blocks),
-                    num_turns=num_turns, success=True,
-                    action_log=action_log, messages=messages, stats=stats,
-                )
-            messages.append({"role": "user", "content": (
-                f"[System] Noted as insufficient (missing: {missing!r}). "
-                "Retrieve the missing information (expand another document, fetch_doc, "
-                "or fetch_blocks), then try answering again."
-            )})
-            pending_answer_content = None
-            continue
-
-        # ── answer ──
-        if act == "answer":
-            if not retrieved_blocks:
-                messages.append({"role": "assistant", "content": raw_action})
-                messages.append({"role": "user", "content": (
-                    "[System] You must retrieve actual document content first — either "
-                    "expand a document and call fetch_blocks with relevant paragraph ids, "
-                    "or call fetch_doc directly if the whole document is needed."
-                )})
-                continue
-
-            # 프롬프트에 미리 알리지 않고, 모델이 낸 answer 초안을 가로채 그 내용 자체를
-            # 근거로 check_sufficiency 를 되묻는다 — 다음 턴은 CHECK_SUFFICIENCY_SCHEMA 로 고정.
-            draft_content = action.get("content", "")
-            messages.append({"role": "assistant", "content": raw_action})
-            messages.append({"role": "user", "content": (
-                "[System] Before finalizing, verify: does the evidence you've "
-                f"retrieved explicitly and fully support this answer — \"{draft_content}\"? "
-                "Call check_sufficiency: if fully supported, set is_sufficient=true; "
-                "if something is missing or unverified, set is_sufficient=false and "
-                "describe exactly what's missing in `missing`."
-            )})
-            pending_answer_content = draft_content
-            continue
-
-        # ── 알 수 없는 액션 ──
-        return AgentResult(
-            answer="", retrieved_context="\n\n".join(retrieved_blocks),
-            num_turns=num_turns, success=False,
-            error=f"알 수 없는 액션: {act!r}  |  raw={raw_action[:200]}",
-            action_log=action_log, messages=messages, stats=stats,
-        )
+            _handle_expand_document(state, action, raw_action, docs, raw_mre_cache)
+        elif act == "fetch_doc":
+            _handle_fetch_doc(state, action, raw_action, docs, query)
+        elif act == "fetch_blocks":
+            _handle_fetch_blocks(state, action, raw_action, docs, query)
+        elif act == "check_sufficiency":
+            result = _handle_check_sufficiency(state, action, raw_action)
+            if result is not None:
+                return result
+        elif act == "answer":
+            _handle_answer(state, action, raw_action)
+        else:
+            return AgentResult(
+                answer="", retrieved_context="\n\n".join(state.retrieved_blocks),
+                num_turns=state.num_turns, success=False,
+                error=f"알 수 없는 액션: {act!r}  |  raw={raw_action[:200]}",
+                action_log=state.action_log, messages=state.messages, stats=state.stats,
+            )
 
     # ── 방어선: fetch 이력이 전혀 없으면 강제 답변하지 않는다 ──
-    if not retrieved_blocks:
+    if not state.retrieved_blocks:
         return AgentResult(
-            answer="", retrieved_context="", num_turns=num_turns, success=False,
+            answer="", retrieved_context="", num_turns=state.num_turns, success=False,
             error="fetch 미실행 — 답변 거부 (MRE 헤더만으로 답변 시도)",
-            action_log=action_log, messages=messages, stats=stats,
+            action_log=state.action_log, messages=state.messages, stats=state.stats,
         )
 
-    # ── 턴 한도 도달: 누적 블록만으로 강제 답변 ──
-    fallback_instruction = (
-        "[System] No more retrieval rounds available. Using ONLY the blocks "
-        "fetched so far, give the answer to the question. Output the answer "
-        "text only — no JSON, no other words.\n"
-        f"Question: {query}"
-    )
-    messages.append({"role": "user", "content": fallback_instruction})
-    try:
-        final_answer, call_stats = await _llm.generate_text(client, model, messages, max_tokens=512)
-        _merge_stats(stats, call_stats)
-    except Exception as e:
-        final_answer = ""
-        fallback_err = f"forced-answer 생성 실패: {e}"
-    else:
-        fallback_err = "max_turns 초과 — 누적 블록으로 강제 답변"
-    action_log.append({"turn": num_turns, "action": "forced_answer", "raw": final_answer})
-
-    return AgentResult(
-        answer=final_answer, retrieved_context="\n\n".join(retrieved_blocks),
-        num_turns=num_turns, success=bool(final_answer), error=fallback_err,
-        action_log=action_log, messages=messages, stats=stats,
-    )
+    return await _forced_fallback_answer(state, query, client, model)
