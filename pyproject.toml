@@ -38,7 +38,7 @@ dependencies = [
 fuzzy = ["thefuzz>=0.19"]
 # 테스트 실행용. mre/tests/ 는 packages 목록에 없으므로(아래 참조) 배포 wheel에는
 # 안 들어간다 — 개발 전용.
-test = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+test = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-cov>=5.0"]
 
 [project.urls]
 Homepage = "https://github.com/Lactobacillus/open-mre"
@@ -55,3 +55,9 @@ packages = ["mre", "mre.agent"]
 # mre 패키지 자체의 동작만 검증하는 self-contained 스위트.
 testpaths = ["mre/tests"]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["mre"]
+# 테스트 파일 자신이 실행되는 것까지 커버리지에 잡히면(테스트가 자기 자신을 "커버"),
+# 실제 라이브러리 코드가 얼마나 검증됐는지와 무관하게 숫자가 부풀어 보인다.
+omit = ["mre/tests/*"]
