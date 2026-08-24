@@ -1,0 +1,143 @@
+from __future__ import annotations
+
+"""
+포맷 감지(또는 명시적 지정) + 사이트/포맷 어댑터 dispatch + LLM 생성을 하나로
+묶은 최상위 진입점 — generate_mre().
+
+모델 선택은 라이브러리가 강제하지 않는다: 호출자가 openai.AsyncOpenAI 클라이언트와
+model 이름을 직접 넘긴다. vLLM 같은 OpenAI-호환 백엔드도 base_url만 다른 동일한
+클라이언트 타입이라 이 함수는 백엔드가 무엇인지 몰라도 된다 — 항상 (client, model)
+두 인자로만 다룬다.
+
+지원 포맷: html, hwpx, docx. pdf/hwp는 아직 어댑터가 없어 NotImplementedError.
+"""
+
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import openai
+from bs4 import BeautifulSoup
+
+from mre.format_detect import DocFormat, detect_format
+from mre.generation import call_llm_chunked_async
+from mre.html_site_adapter import HTMLSiteAdapter, compute_adapter_fingerprint, get_site_adapter
+from mre.llm_util import MODEL_CTX, _merge_stats, _new_stats
+from mre.opc_adapter import get_opc_adapter
+from mre.repair import _MISALIGN_MAX_RETRIES, repair_misaligned_alignment_async
+from mre.xml_builder import build_mre_xml
+
+
+@dataclass
+class MREGenerationResult:
+    format: DocFormat
+    title: str
+    mre_xml: str
+    embedded_html: str | None = None    # format=HTML일 때만 채워짐
+    embedded_path: Path | None = None   # format=HWPX/DOCX일 때만 채워짐 (source와 동일 경로, in-place 갱신됨)
+    stats: dict = field(default_factory=dict)
+
+
+async def generate_mre(
+    source: str | Path,
+    *,
+    client: openai.AsyncOpenAI,
+    model: str,
+    title: str,
+    url: str | None = None,
+    fmt: DocFormat | None = None,
+    html_fallback_adapter: HTMLSiteAdapter | None = None,
+    guided: bool = True,
+    model_ctx: int = MODEL_CTX,
+    repair: bool = True,
+    repair_misaligned: bool = False,
+    misalign_retries: int = _MISALIGN_MAX_RETRIES,
+    embed: bool = True,
+) -> MREGenerationResult:
+    """source로부터 MRE XML을 생성한다.
+
+    Parameters
+    ----------
+    source : format=html이면 원문 HTML 텍스트(str). hwpx/docx면 파일 경로(str | Path).
+    client : LLM 호출에 쓸 OpenAI-호환 비동기 클라이언트. openai 공식 SDK든 vLLM
+             OpenAI-compatible 서버든 무엇이든 가능 — base_url만 다르면 됨.
+    model  : client에 넘길 모델 이름. 라이브러리가 기본값을 강제하지 않으므로
+             호출자가 항상 명시해야 한다.
+    title  : MRE <metadata><title>에 들어갈 문서 제목. 자동 추출하지 않는다 —
+             호출자가 넘긴다 (문서 소스마다 제목 위치가 제각각이라서).
+    url    : format=html일 때 사이트별 파싱 어댑터를 고르는 데 쓰는 문서 원본 URL.
+             html 소스는 원문 텍스트(str)라 그대로 detect_format에 넘기면 "파일
+             경로"로 오인되므로(자세한 이유는 mre.format_detect 참조), fmt를
+             명시하지 않은 경우 url이 주어지면 그 자체로 fmt=HTML로 확정한다.
+    fmt    : 포맷을 직접 지정해 자동 감지를 건너뛴다. 미지정 시
+             (url이 있으면 HTML) -> detect_format(source) 순으로 판단.
+    html_fallback_adapter : url의 도메인이 등록되지 않았을 때 쓸 대체 HTML 어댑터.
+    repair : 꼬리 누락(headings/keywords 배열이 문단 수보다 짧아 뒤가 비는 것) 재생성
+             pass 실행 여부. 기본 켜짐 (mre_generator3.py CLI의 기본과 동일).
+    repair_misaligned : keyword grounding 실패(인접 문단 엔티티가 섞여 들어온 경우)까지
+             재생성할지. 기본 꺼짐 — mre_generator3.py에서 이 재생성이 cross-paragraph
+             검색 신호를 지워 retrieval precision을 떨어뜨리는 회귀가 확인된 옵션.
+    embed  : True(기본)면 결과를 문서에 실제로 삽입한다 — html은 삽입된 새 문자열을
+             반환, hwpx/docx는 source 파일을 in-place로 갱신한다. False면 mre_xml만
+             만들고 문서에는 손대지 않는다.
+    """
+    if fmt is None:
+        fmt = DocFormat.HTML if url is not None else detect_format(source)
+
+    if fmt is DocFormat.HTML:
+        if url is None:
+            raise ValueError("format=html 생성에는 url이 필요합니다 (사이트별 어댑터 선택용).")
+        html = source
+        site_adapter = get_site_adapter(url, fallback=html_fallback_adapter)
+        soup = BeautifulSoup(html, "lxml")
+        if site_adapter.preprocess is not None:
+            # in-place로 soup를 정리(예: 부록 section 제거, 짧은 section 통합).
+            # embed는 이 soup가 아니라 항상 원본 html 문자열에 대해 수행한다 (아래 참조).
+            site_adapter.preprocess(soup)
+        raw_nodes = site_adapter.extract(soup)
+        if site_adapter.assign_ids is not None:
+            # in-place로 문단 id 를 재작성 (예: Wikipedia 의 제목 첫 글자 접두어 —
+            # cross-document id collision 완화, mre_generator3.py 와 동일 규칙).
+            site_adapter.assign_ids(raw_nodes, title)
+        nodes = site_adapter.strip(raw_nodes)
+    elif fmt in (DocFormat.HWPX, DocFormat.DOCX):
+        path = Path(source)
+        opc_adapter = get_opc_adapter(fmt)
+        nodes = opc_adapter.strip(opc_adapter.extract(path))
+    else:
+        raise NotImplementedError(f"{fmt.value} 어댑터는 아직 없음 (지원: html, hwpx, docx)")
+
+    llm_data, gen_stats = await call_llm_chunked_async(
+        client, title, nodes, model=model, guided=guided, model_ctx=model_ctx,
+    )
+    stats = _new_stats()
+    _merge_stats(stats, gen_stats)
+
+    if repair:
+        llm_data, repair_stats, _counts = await repair_misaligned_alignment_async(
+            client, title, nodes, llm_data,
+            model=model, guided=guided, model_ctx=model_ctx,
+            max_retries=misalign_retries, include_misaligned=repair_misaligned,
+        )
+        _merge_stats(stats, repair_stats)
+
+    if fmt is DocFormat.HTML:
+        # fetch_block() 이 나중에 이 값을 재계산해 비교할 수 있도록 문서에 새겨둔다 —
+        # site_adapter.fetch() 를 나중에 실행할 때 그 사이 어댑터 파싱 로직이 바뀌었는지
+        # (id-to-paragraph 매핑이 어긋났을 수 있는지) 알아내는 유일한 방법.
+        mre_xml = build_mre_xml(
+            llm_data, nodes, title=title,
+            generator=site_adapter.name,
+            generator_fingerprint=compute_adapter_fingerprint(site_adapter),
+        )
+    else:
+        mre_xml = build_mre_xml(llm_data, nodes, title=title)
+    result = MREGenerationResult(format=fmt, title=title, mre_xml=mre_xml, stats=stats)
+
+    if embed:
+        if fmt is DocFormat.HTML:
+            result.embedded_html = site_adapter.embed(html, mre_xml)
+        else:
+            opc_adapter.embed(path, mre_xml)
+            result.embedded_path = path
+
+    return result

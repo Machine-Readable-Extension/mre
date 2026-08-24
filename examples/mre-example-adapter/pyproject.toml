@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mre-example-adapter"
+version = "0.1.0"
+description = "Minimal reference implementation of an mre.site_adapters plugin — shows how a site owner ships their own MRE adapter as an installable package"
+requires-python = ">=3.10"
+dependencies = [
+    "mre",
+    "beautifulsoup4>=4.9",
+]
+
+# This is the whole mechanism: `mre` discovers this package purely by scanning
+# installed packages for entry points in the "mre.site_adapters" group — no
+# code in the `mre` core library names this package or vice versa.
+[project.entry-points."mre.site_adapters"]
+example = "mre_example_adapter:ADAPTER"
+
+[tool.setuptools]
+packages = ["mre_example_adapter"]

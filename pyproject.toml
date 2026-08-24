@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mre"
+version = "1.0.0"
+description = "Machine-Readable Extension (MRE): generate LLM-navigable structured headers for HTML/HWPX/DOCX documents, for agentic RAG"
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+    { name = "selyn-a", email = "selyn1004@naver.com" },
+]
+keywords = ["rag", "retrieval-augmented-generation", "llm-agent", "mre", "document-structure"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Text Processing :: Markup",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "openai>=1.0",
+    "beautifulsoup4>=4.9",
+    "lxml>=4.6",
+]
+
+[project.optional-dependencies]
+# repair.py의 keyword-grounding fuzzy fallback(thefuzz.partial_ratio)에만 쓰인다.
+# 미설치 시 정규화 substring 매칭만 적용되고 조용히 저하(silent degrade)한다 — 정밀한
+# misalignment 탐지가 필요하면 설치를 권장.
+fuzzy = ["thefuzz>=0.19"]
+# 테스트 실행용. mre/tests/ 는 packages 목록에 없으므로(아래 참조) 배포 wheel에는
+# 안 들어간다 — 개발 전용.
+test = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[project.urls]
+Homepage = "https://github.com/Lactobacillus/open-mre"
+Repository = "https://github.com/Lactobacillus/open-mre"
+
+[tool.setuptools]
+# find: 자동 탐색 대신 명시적으로 나열 — mre.agent 는 옵트인 서브패키지지만 "import
+# 범위"의 문제일 뿐 추가 의존성이 없어(openai 는 이미 core 의 필수 의존성) 별도 extra 로
+# 뺄 이유가 없다 — wheel 에는 항상 포함하고, import mre.agent 를 실제로 해야만 로드된다.
+# (mre/tests/ 는 이 목록에 없으므로 wheel에서 빠진다.)
+packages = ["mre", "mre.agent"]
+
+[tool.pytest.ini_options]
+# mre 패키지 자체의 동작만 검증하는 self-contained 스위트.
+testpaths = ["mre/tests"]
+asyncio_mode = "auto"
