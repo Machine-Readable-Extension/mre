@@ -1,0 +1,57 @@
+name: Publish to PyPI
+
+# Triggered by publishing a GitHub Release (tag the release e.g. v1.1.0 to
+# match pyproject.toml's version -- PyPI rejects a re-upload of a version
+# that already exists, so a stale tag/version mismatch fails loudly here
+# rather than silently overwriting anything). workflow_dispatch is a manual
+# escape hatch for re-running a build without cutting a new release.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist and wheel
+        run: |
+          pip install build
+          python -m build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # Named GitHub Environment -- must match the environment name configured
+    # on the PyPI Trusted Publisher for this project (see workflow README
+    # note / repo setup docs). Also lets you attach a required-reviewer rule
+    # in GitHub repo settings for a manual gate before every real publish.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/mre/
+    permissions:
+      # Trusted Publishing (OIDC) -- PyPI verifies this token against the
+      # publisher config instead of a long-lived PYPI_API_TOKEN secret.
+      id-token: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

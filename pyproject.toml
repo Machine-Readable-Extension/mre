@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mre"
-version = "1.0.0"
+version = "1.1.0"
 description = "Machine-Readable Extension (MRE): generate LLM-navigable structured headers for HTML/HWPX/DOCX documents, for agentic RAG"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
