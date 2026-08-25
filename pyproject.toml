@@ -4,18 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 # PyPI distribution name -- "mre" itself is already taken by an unrelated
-# project (a "Maker Regular Expressions" tool). The import name is
-# unaffected: `pip install machine-readable-extension` still gives you
-# `import mre` (see [tool.setuptools] packages= below), the same split
-# beautifulsoup4/bs4 or pyyaml/yaml use.
-name = "machine-readable-extension"
+# project (a "Maker Regular Expressions" tool). "py-" prefix is a common
+# PyPI convention for this situation (py-cpuinfo, py-spy, ...). The import
+# name is unaffected: `pip install py-mre` still gives you `import mre`
+# (see [tool.setuptools] packages= below), the same split beautifulsoup4/bs4
+# or pyyaml/yaml use.
+name = "py-mre"
 version = "1.1.0"
 description = "Machine-Readable Extension (MRE): generate LLM-navigable structured headers for HTML/HWPX/DOCX documents, for agentic RAG"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [
-    { name = "selyn-a", email = "selyn1004@naver.com" },
+    { name = "selyn-a", email = "126850773+selyn-a@users.noreply.github.com" },
 ]
 keywords = ["rag", "retrieval-augmented-generation", "llm-agent", "mre", "document-structure"]
 classifiers = [

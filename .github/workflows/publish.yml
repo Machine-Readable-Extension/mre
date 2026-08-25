@@ -41,7 +41,7 @@ jobs:
     # in GitHub repo settings for a manual gate before every real publish.
     environment:
       name: pypi
-      url: https://pypi.org/project/machine-readable-extension/
+      url: https://pypi.org/project/py-mre/
     permissions:
       # Trusted Publishing (OIDC) -- PyPI verifies this token against the
       # publisher config instead of a long-lived PYPI_API_TOKEN secret.
