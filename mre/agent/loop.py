@@ -9,10 +9,11 @@ core/pipeline.py 의 MREAgent._run_progressive 를 이 라이브러리 배포 �
     뺐다 — 이 서브패키지는 progressive 모드 하나만 다루고, 답변 형식도 SA/LA 구분 없이
     중립 문구 하나로 통일했다(mre.agent.prompts 참조). 대신 mre.llm_util 의 stats
     누적기(prompt/completion 토큰 + 호출 수)를 그대로 재사용한다.
-  - `_fetch_blocks_v3`(core/pipeline.py 자체 구현) 대신 mre.fetch_block()/mre.fetch_opc() 를
-    쓴다 — generate_mre() 가 만든 문서를 그대로 소비할 수 있고(html 은 generator-fingerprint
-    불일치 감지도 자동으로 딸려온다 — opc(hwpx/docx) 는 아직 그 체크가 없다), 문서별 "html"
-    vs "path" 키로 어느 쪽을 쓸지 판단한다(_is_opc_doc 참조).
+  - `_fetch_blocks_v3`(core/pipeline.py 자체 구현) 대신 mre.fetch_block()/mre.fetch_opc()/
+    mre.fetch_pdf() 를 쓴다 — generate_mre() 가 만든 문서를 그대로 소비할 수 있고(html 은
+    generator-fingerprint 불일치 감지도 자동으로 딸려온다 — opc(hwpx/docx)/pdf 는 아직 그
+    체크가 없다), 문서별 "html" vs "path" 키로 어느 쪽을 쓸지, "path"면 fmt로 opc/pdf 중
+    어느 쪽을 쓸지 판단한다(_is_path_doc 참조).
   - GuidedLLM(in-process vLLM)이 아니라 OpenAI-호환 client 하나로 동작한다
     (mre.agent.llm 참조) — mre.generate_mre() 와 동일한 관례.
 """
@@ -24,7 +25,7 @@ from dataclasses import dataclass, field
 
 import openai
 
-from mre import extract_mre_xml_opc, fetch_block, fetch_opc
+from mre import DocFormat, extract_mre_xml_opc, extract_mre_xml_pdf, fetch_block, fetch_opc, fetch_pdf
 from mre.agent import llm as _llm
 from mre.agent.prompts import ANSWER_FORMAT, SYSTEM_PROMPT
 from mre.agent.schema import (
@@ -83,16 +84,27 @@ def _normalize_title(title: str) -> str:
     return title.strip()
 
 
-def _is_opc_doc(doc: dict) -> bool:
-    """docs[title] 이 html(사이트 어댑터) 문서인지 opc(hwpx/docx) 문서인지 판별.
-    schema: html -> {"html", "url"}, opc -> {"path", "fmt"} (mre.DocFormat.HWPX/DOCX)."""
+def _is_path_doc(doc: dict) -> bool:
+    """docs[title] 이 html(사이트 어댑터) 문서인지 path 기반(opc: hwpx/docx, 또는 pdf)
+    문서인지 판별. schema: html -> {"html", "url"}, path 기반 -> {"path", "fmt"}
+    (mre.DocFormat.HWPX/DOCX/PDF) -- 어느 path 기반 포맷인지는 fmt로 다시 갈린다."""
     return "path" in doc
 
 
+def _extract_raw_mre(doc: dict) -> str | None:
+    if not _is_path_doc(doc):
+        return extract_mre_xml(doc["html"])
+    if doc["fmt"] is DocFormat.PDF:
+        return extract_mre_xml_pdf(doc["path"])
+    return extract_mre_xml_opc(doc["path"])
+
+
 def _fetch_one(doc: dict, pid: str) -> str:
-    if _is_opc_doc(doc):
-        return fetch_opc(doc["path"], pid, doc["fmt"])
-    return fetch_block(doc["url"], doc["html"], pid)
+    if not _is_path_doc(doc):
+        return fetch_block(doc["url"], doc["html"], pid)
+    if doc["fmt"] is DocFormat.PDF:
+        return fetch_pdf(doc["path"], pid)
+    return fetch_opc(doc["path"], pid, doc["fmt"])
 
 
 def _fetch_blocks(params_list: list[dict], docs: dict[str, dict]) -> str:
@@ -320,10 +332,11 @@ async def run_agent(
               - html : {"html": <mre 가 임베드된 문서 HTML>, "url": <fetch_block() 이
                 사이트 어댑터를 고르는 데 쓰는 원본 URL>}. generate_mre(fmt=DocFormat.HTML,
                 ...) 결과의 embedded_html 을 그대로 넣으면 된다.
-              - hwpx/docx : {"path": <mre 가 임베드된 hwpx/docx 파일 경로>,
-                "fmt": DocFormat.HWPX 또는 DocFormat.DOCX}. generate_mre(fmt=DocFormat.HWPX
-                또는 DOCX, ...) 가 in-place 로 갱신한 embedded_path 를 그대로 넣으면 된다.
-                fetch_block() 의 generator-fingerprint 불일치 감지는 이 경로엔 아직 없다.
+              - hwpx/docx/pdf : {"path": <mre 가 임베드된 hwpx/docx/pdf 파일 경로>,
+                "fmt": DocFormat.HWPX, DocFormat.DOCX 또는 DocFormat.PDF}.
+                generate_mre(fmt=..., ...) 가 in-place 로 갱신한 embedded_path 를 그대로
+                넣으면 된다. fetch_block() 의 generator-fingerprint 불일치 감지는 이
+                경로엔 아직 없다.
     client, model : mre.generate_mre() 와 동일한 관례 — OpenAI-호환 비동기 클라이언트와
             모델 이름을 호출자가 직접 넘긴다. 라이브러리는 기본 모델/백엔드를 강제하지 않는다.
     max_turns : 턴 한도. 기본 mre.agent.schema.MAX_TURNS(12) — expand+fetch 한 세트당
@@ -337,7 +350,7 @@ async def run_agent(
     metadata_parts: list[str] = []
     for title in normalized_titles:
         doc = docs[title]
-        raw_mre = extract_mre_xml_opc(doc["path"]) if _is_opc_doc(doc) else extract_mre_xml(doc["html"])
+        raw_mre = _extract_raw_mre(doc)
         if not raw_mre:
             raise MRENotFoundError(title)
         raw_mre_cache[title] = raw_mre

@@ -178,7 +178,7 @@ The opt-in `mre.agent` subpackage implements that loop, using **progressive
 disclosure**: every candidate document starts out showing only its
 `<metadata>`, and the agent expands specific documents' full `<tree>` (or
 fetches them whole) before drilling into individual paragraphs. Candidate
-documents can be HTML, HWPX, or DOCX, freely mixed in the same run.
+documents can be HTML, HWPX, DOCX, or PDF, freely mixed in the same run.
 
 ```python
 from mre.agent import run_agent
@@ -205,7 +205,7 @@ wiring MRE into a different agent loop instead. Full walkthrough:
 | HWPX | built-in | extra `mre.xml` entry in the zip archive | `fetch_opc()` |
 | DOCX | built-in (body paragraphs only — table cells are out of scope) | extra `mre.xml` entry in the zip archive | `fetch_opc()` |
 | HWP (legacy, OLE2) | built-in, parsing-only — `mre.hwp_adapter.parse_hwp()` | not implemented | not yet |
-| PDF | detected (`detect_format`) | not implemented — `generate_mre()` raises `NotImplementedError` | not yet |
+| PDF | built-in, paragraph text only — see [Legacy HWP / PDF](https://machine-readable-extension.github.io/mre/formats/) | `mre.xml` as a PDF file attachment | `fetch_pdf()` |
 
 > ⚠️ **HWP has no embed path, and the one workaround has measured content loss.**
 > `mre.convert_hwp(path, target=DocFormat.DOCX)` shells out to an externally-installed

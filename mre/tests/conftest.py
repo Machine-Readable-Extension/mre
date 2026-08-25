@@ -48,3 +48,23 @@ def construction_safety_cost_notice_hwp() -> Path:
     long sentences, revision-history entries, and CJK bracket punctuation
     (｢｣「」·․) instead of table cells. Read-only, so no tmp_path copy needed."""
     return FIXTURES_DIR / "construction_safety_cost_notice.hwp"
+
+
+@pytest.fixture
+def sample_prose_pdf(tmp_path) -> Path:
+    """2-page PDF (built with reportlab) with paragraphs separated by extra
+    vertical leading -- exercises the layout-mode blank-line paragraph split
+    and cross-page id numbering. Copied into tmp_path so embed_mre_pdf()-ing
+    mre.xml into it doesn't mutate the fixture (same reasoning as sample_docx/
+    sample_hwpx)."""
+    dst = tmp_path / "sample_prose.pdf"
+    shutil.copy(FIXTURES_DIR / "sample_prose.pdf", dst)
+    return dst
+
+
+@pytest.fixture
+def no_paragraph_breaks_pdf() -> Path:
+    """1-page PDF where every line uses identical leading -- no vertical gap
+    anywhere, so layout-mode extraction never emits a blank line. Exercises
+    the whole-page-as-one-paragraph fallback."""
+    return FIXTURES_DIR / "no_paragraph_breaks.pdf"

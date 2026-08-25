@@ -351,11 +351,24 @@ def _wiki_build_structure_tree(soup: BeautifulSoup) -> list[dict]:
     return nodes
 
 
+_MRE_SCRIPT_TAG_RE = re.compile(
+    r'\s*<script\s+type="application/mre\+xml"\s*>.*?</script>\s*',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
 def _wiki_inject_mre_into_html(html: str, mre_xml: str) -> str:
     """
     Inject the MRE block as a <script type="application/mre+xml"> tag
     inside <head>. Falls back to prepending if no <head> is found.
+
+    Strips any existing MRE script tag(s) first, so calling this again on
+    already-embedded html replaces the block instead of leaving the old one
+    in place -- extract_mre_xml() finds the first match in document order,
+    so without this the OLDEST embed would keep winning on re-embed, the
+    opposite of insert_mre_into_zip()/embed_mre_pdf(), which both replace.
     """
+    html = _MRE_SCRIPT_TAG_RE.sub("", html)
     mre_tag = f'\n<script type="application/mre+xml">\n{mre_xml}\n</script>\n'
 
     head_end = re.search(r"</head\s*>", html, re.IGNORECASE)

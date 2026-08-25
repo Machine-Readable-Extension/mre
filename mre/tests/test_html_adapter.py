@@ -1,6 +1,6 @@
 from bs4 import BeautifulSoup
 
-from mre import get_site_adapter, register_site, registered_sites
+from mre import extract_mre_xml, get_site_adapter, register_site, registered_sites
 from mre.html_site_adapter import UnknownSiteError
 import pytest
 
@@ -84,3 +84,46 @@ def test_register_site_requires_domains():
                 embed=lambda html, xml: html,
             )
         )
+
+
+# ─────────────────────────────────────────────
+# embed (_wiki_inject_mre_into_html) -- re-embed must replace, not accumulate
+# ─────────────────────────────────────────────
+
+
+def test_embed_inserts_mre_script_tag_before_head_close():
+    html = "<html><head><title>T</title></head><body>x</body></html>"
+    embedded = get_site_adapter("https://en.wikipedia.org/wiki/X").embed(html, "<mre>v1</mre>")
+
+    assert embedded.count('<script type="application/mre+xml">') == 1
+    assert extract_mre_xml(embedded) == "<mre>v1</mre>"
+
+
+def test_reembed_replaces_rather_than_accumulates():
+    html = "<html><head><title>T</title></head><body>x</body></html>"
+    adapter = get_site_adapter("https://en.wikipedia.org/wiki/X")
+
+    once = adapter.embed(html, "<mre>v1</mre>")
+    twice = adapter.embed(once, "<mre>v2</mre>")
+
+    assert twice.count('<script type="application/mre+xml">') == 1
+    assert extract_mre_xml(twice) == "<mre>v2</mre>"
+
+
+def test_reembed_leaves_rest_of_document_untouched():
+    html = "<html><head><title>T</title></head><body><p>keep me</p></body></html>"
+    adapter = get_site_adapter("https://en.wikipedia.org/wiki/X")
+
+    once = adapter.embed(html, "<mre>v1</mre>")
+    twice = adapter.embed(once, "<mre>v2</mre>")
+
+    assert "<p>keep me</p>" in twice
+    assert "<title>T</title>" in twice
+
+
+def test_embed_falls_back_to_prepending_when_no_head_tag():
+    html = "no html tags at all"
+    embedded = get_site_adapter("https://en.wikipedia.org/wiki/X").embed(html, "<mre>v1</mre>")
+
+    assert extract_mre_xml(embedded) == "<mre>v1</mre>"
+    assert "no html tags at all" in embedded

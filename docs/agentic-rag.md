@@ -30,9 +30,9 @@ async def main():
         },
         "Pleasure Cove (press release)": {
             "path": "pleasure_cove.hwpx",  # from generate_mre()'s embedded_path
-            "fmt": DocFormat.HWPX,  # or DocFormat.DOCX
+            "fmt": DocFormat.HWPX,  # or DocFormat.DOCX / DocFormat.PDF
         },
-        # ... more candidate documents, html and hwpx/docx freely mixed
+        # ... more candidate documents, html and hwpx/docx/pdf freely mixed
     }
 
     result = await run_agent(
@@ -53,9 +53,10 @@ dict can mix both:
 
 - html: `"html"` (the MRE-embedded document) + `"url"` (forwarded to
   `fetch_block()` to pick the right site adapter).
-- hwpx/docx: `"path"` (the MRE-embedded file, in-place-updated by
-  `generate_mre()`'s `embedded_path`) + `"fmt"` (`DocFormat.HWPX` or
-  `DocFormat.DOCX`, forwarded to `fetch_opc()`).
+- hwpx/docx/pdf: `"path"` (the MRE-embedded file, in-place-updated by
+  `generate_mre()`'s `embedded_path`) + `"fmt"` (`DocFormat.HWPX`,
+  `DocFormat.DOCX`, or `DocFormat.PDF` — forwarded to `fetch_opc()` for the
+  first two, `fetch_pdf()` for the last).
 
 `run_agent()` returns an `AgentResult` — `answer`, `success`, `num_turns`,
 the full `messages`/`action_log` for inspection, and `stats` (prompt/
@@ -76,6 +77,7 @@ into a different agent loop (LangChain, a hand-rolled one, ...) instead:
 | `mre.agent.metadata_view(mre_xml)` | strips `<tree>` down to metadata-only, for the first-stage view |
 | `mre.reader.extract_mre_xml(html)` | reads the raw `<mre>` block back out of embedded HTML |
 | `mre.extract_mre_xml_opc(path)` | reads the raw `<mre>` block back out of an embedded hwpx/docx file |
+| `mre.extract_mre_xml_pdf(path)` | reads the raw `<mre>` block back out of an embedded pdf file |
 
 `run_agent()` answers in whatever length and form the question calls for —
 there's no short-answer/long-answer mode switch, since that distinction
@@ -85,7 +87,8 @@ the answer.
 Only progressive disclosure is implemented so far. `mre.agent` uses an
 OpenAI-compatible async client the same way `generate_mre()` does (so a
 local vLLM server works too, via `base_url`), and only works with formats
-that implement `fetch` — currently HTML/Wikipedia and hwpx/docx (see
-[Document formats](formats.md)); PDF/HWP raise `NotImplementedError` from
-`generate_mre()` itself, so they never reach `run_agent()` as an embeddable
-candidate document.
+that implement `fetch` — currently HTML/Wikipedia, hwpx/docx, and pdf (see
+[Document formats](formats.md)); HWP raises `NotImplementedError` from
+`generate_mre()` itself, so it never reaches `run_agent()` as an embeddable
+candidate document (see [Legacy HWP](formats.md#legacy-hwp-parsing-only)
+for the `mre.convert_hwp()` workaround and its caveats).

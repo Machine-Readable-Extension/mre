@@ -6,7 +6,7 @@
 | HWPX | built-in | extra `mre.xml` entry in the zip archive | `fetch_opc()` |
 | DOCX | built-in (body paragraphs only — table cells are out of scope) | extra `mre.xml` entry in the zip archive | `fetch_opc()` |
 | HWP (legacy, OLE2) | built-in, paragraph text only — see below | not implemented (see below) | not yet |
-| PDF | detected (`detect_format`) | not implemented — `generate_mre()` raises `NotImplementedError` | not yet |
+| PDF | built-in, paragraph text only — see below | `mre.xml` as a PDF file attachment — see below | `fetch_pdf()` |
 
 HWPX/DOCX use a separate function, `fetch_opc(path, node_id, fmt)`, since (unlike HTML)
 there's no per-site adapter to pick — just a format:
@@ -77,6 +77,54 @@ quirk (heavy embedded objects, equations, revision marks).
     result = await generate_mre(docx_path, client=client, model=model,
                                  title="...", fmt=DocFormat.DOCX)
     ```
+
+## PDF
+
+**Parsing** — `mre.pdf_adapter.parse_pdf(path)` (or `build_structure_tree_pdf(path)`
+for the unstripped nodes, paragraph-only — no heading concept, same as HWP/HWPX)
+extracts each page's text via `pypdf`'s `extraction_mode="layout"`, which — unlike the
+default plain-text mode — reconstructs vertical whitespace as blank lines
+proportional to the actual gap between lines on the page. A run of non-blank lines
+separated from the next by a blank line becomes one paragraph; a page with no
+extra spacing anywhere falls back to one paragraph for the whole page rather than
+fragmenting every wrapped line. Scanned/image-only PDFs (no text layer) yield no
+paragraphs — that needs OCR, out of scope here. Some PDFs draw bullets through a
+custom symbol font with no `ToUnicode` mapping, which would otherwise leak a raw
+private-use-area codepoint into the text (observed on a real report) — stripped
+alongside stray control characters, mirroring HWP's leftover-control-char safety net.
+
+```python
+from mre.pdf_adapter import parse_pdf
+
+nodes = parse_pdf("report.pdf")
+```
+
+**Embed/fetch, unlike HWP, is supported** — the reason HWP is parsing-only
+("no maintained pure-Python CFB writer") doesn't apply to PDF: PDF has a standard
+container mechanism, file attachments (`/EmbeddedFiles`, PDF32000-1:2008 §7.11.3),
+that plays the same role HWPX/DOCX's "extra zip entry" does. `pypdf.PdfWriter`
+supports it natively, and embedding an attachment never touches the page content
+streams — `generate_mre(fmt=DocFormat.PDF, ...)` works the same way it does for
+hwpx/docx (`embedded_path` is the same file, updated in place), and `docs` entries
+for `run_agent()` use the identical `{"path", "fmt"}` shape with `fmt=DocFormat.PDF`.
+`fetch_pdf(path, node_id)` re-parses the file the same way `fetch_opc()` does (the
+single-source-of-truth principle — see
+[Detecting a stale adapter](quickstart.md#detecting-a-stale-adapter)):
+
+```python
+from mre import DocFormat, embed_mre_pdf, fetch_pdf
+
+embed_mre_pdf("report.pdf", mre_xml)
+text = fetch_pdf("report.pdf", "p2")
+```
+
+Re-embedding replaces rather than accumulates — pypdf has no attachment-removal
+API, so `embed_mre_pdf()` prunes any existing `mre.xml` entry out of the writer's
+`Names`/`EmbeddedFiles` tree before adding the fresh one (see
+`mre.pdf_adapter._remove_existing_mre_attachment` — the one place this module
+reaches into pypdf's private object graph, since no public API exists for removal;
+the PDF-spec-fixed tree shape makes that a reasonably safe bet). No
+generator-fingerprint check for this path either, same as hwpx/docx.
 
 ## Adding a new HTML site
 

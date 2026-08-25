@@ -30,7 +30,7 @@ from typing import Callable
 
 from mre.format_detect import DocFormat
 from mre.html_site_adapter import FetchNotSupportedError
-from mre.nodes import strip_to_text_nodes
+from mre.nodes import fetch_paragraph_by_id, strip_to_text_nodes
 
 
 @dataclass(frozen=True)
@@ -286,30 +286,16 @@ def insert_mre_into_zip(opc_path: Path, mre_xml: str) -> None:
 # html_site_adapter._wiki_fetch와 달리 별도 재파싱 로직이 필요 없다: extract()가 만드는
 # paragraph 노드의 text는 (Wikipedia의 _wiki_extract_node_text와 달리) LLM 프롬프트용으로
 # 잘리지 않은 전체 텍스트이므로, extract()를 그대로 다시 불러 인덱싱하면 곧 fetch가 된다 —
-# 진짜 "single truth"(생성 시점과 fetch 시점이 완전히 같은 함수를 씀).
-
-_PID_RE = re.compile(r"^[A-Za-z]*(\d+)$")
-
-
-def _fetch_from_paragraphs(nodes: list[dict], node_id: str) -> str:
-    para_nodes = [n for n in nodes if n.get("type") == "paragraph"]
-    if node_id == "full":
-        return "\n\n".join(n["text"] for n in para_nodes)
-    m = _PID_RE.match(node_id)
-    if not m:
-        return ""
-    idx = int(m.group(1))
-    if 1 <= idx <= len(para_nodes):
-        return para_nodes[idx - 1]["text"]
-    return ""
+# 진짜 "single truth"(생성 시점과 fetch 시점이 완전히 같은 함수를 씀). id 조회 로직 자체는
+# mre.pdf_adapter와도 공유하므로 mre.nodes.fetch_paragraph_by_id에 있다.
 
 
 def _hwpx_fetch(path: Path, node_id: str) -> str:
-    return _fetch_from_paragraphs(build_structure_tree_hwpx(path), node_id)
+    return fetch_paragraph_by_id(build_structure_tree_hwpx(path), node_id)
 
 
 def _docx_fetch(path: Path, node_id: str) -> str:
-    return _fetch_from_paragraphs(build_structure_tree_docx(path), node_id)
+    return fetch_paragraph_by_id(build_structure_tree_docx(path), node_id)
 
 
 # ─────────────────────────────────────────────

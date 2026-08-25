@@ -9,7 +9,10 @@ model 이름을 직접 넘긴다. vLLM 같은 OpenAI-호환 백엔드도 base_ur
 클라이언트 타입이라 이 함수는 백엔드가 무엇인지 몰라도 된다 — 항상 (client, model)
 두 인자로만 다룬다.
 
-지원 포맷: html, hwpx, docx. pdf/hwp는 아직 어댑터가 없어 NotImplementedError.
+지원 포맷: html, hwpx, docx, pdf. hwp는 아직 어댑터가 없어 NotImplementedError.
+pdf는 파싱/embed/fetch는 되지만(mre.pdf_adapter 참조) "생성"은 여전히 안 된다 —
+여기서 하는 일은 LLM으로 새로 만든 mre_xml을 이미 존재하는 pdf에 첨부하는 것뿐,
+LLM이 pdf 자체를 authoring하는 게 아니라서 다른 포맷과 코드 경로는 동일하다.
 """
 
 from dataclasses import dataclass, field
@@ -23,6 +26,7 @@ from mre.generation import call_llm_chunked_async
 from mre.html_site_adapter import HTMLSiteAdapter, compute_adapter_fingerprint, get_site_adapter
 from mre.llm_util import MODEL_CTX, _merge_stats, _new_stats
 from mre.opc_adapter import get_opc_adapter
+from mre.pdf_adapter import embed_mre_pdf, parse_pdf
 from mre.repair import _MISALIGN_MAX_RETRIES, repair_misaligned_alignment_async
 from mre.xml_builder import build_mre_xml
 
@@ -33,7 +37,7 @@ class MREGenerationResult:
     title: str
     mre_xml: str
     embedded_html: str | None = None    # format=HTML일 때만 채워짐
-    embedded_path: Path | None = None   # format=HWPX/DOCX일 때만 채워짐 (source와 동일 경로, in-place 갱신됨)
+    embedded_path: Path | None = None   # format=HWPX/DOCX/PDF일 때만 채워짐 (source와 동일 경로, in-place 갱신됨)
     stats: dict = field(default_factory=dict)
 
 
@@ -57,7 +61,7 @@ async def generate_mre(
 
     Parameters
     ----------
-    source : format=html이면 원문 HTML 텍스트(str). hwpx/docx면 파일 경로(str | Path).
+    source : format=html이면 원문 HTML 텍스트(str). hwpx/docx/pdf면 파일 경로(str | Path).
     client : LLM 호출에 쓸 OpenAI-호환 비동기 클라이언트. openai 공식 SDK든 vLLM
              OpenAI-compatible 서버든 무엇이든 가능 — base_url만 다르면 됨.
     model  : client에 넘길 모델 이름. 라이브러리가 기본값을 강제하지 않으므로
@@ -107,8 +111,11 @@ async def generate_mre(
         path = Path(source)
         opc_adapter = get_opc_adapter(fmt)
         nodes = opc_adapter.strip(opc_adapter.extract(path))
+    elif fmt is DocFormat.PDF:
+        path = Path(source)
+        nodes = parse_pdf(path)
     else:
-        raise NotImplementedError(f"{fmt.value} 어댑터는 아직 없음 (지원: html, hwpx, docx)")
+        raise NotImplementedError(f"{fmt.value} 어댑터는 아직 없음 (지원: html, hwpx, docx, pdf)")
 
     llm_data, gen_stats = await call_llm_chunked_async(
         client, title, nodes, model=model, guided=guided, model_ctx=model_ctx,
@@ -140,6 +147,9 @@ async def generate_mre(
     if embed:
         if fmt is DocFormat.HTML:
             result.embedded_html = site_adapter.embed(html, mre_xml)
+        elif fmt is DocFormat.PDF:
+            embed_mre_pdf(path, mre_xml)
+            result.embedded_path = path
         else:
             opc_adapter.embed(path, mre_xml)
             result.embedded_path = path

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 from bs4 import BeautifulSoup
 
-from mre import DocFormat, embed_mre_opc, parse_opc
+from mre import DocFormat, embed_mre_opc, embed_mre_pdf, parse_opc, parse_pdf
 from mre.agent import MRENotFoundError, run_agent
 from mre.html_site_adapter import get_site_adapter
 from mre.xml_builder import build_mre_xml
@@ -14,6 +14,7 @@ from mre.xml_builder import build_mre_xml
 _URL = "https://en.wikipedia.org/wiki/David_Lightfoot"
 _TITLE = "David Lightfoot"
 _DOCX_TITLE = "Sample Report"
+_PDF_TITLE = "Quarterly Safety Report"
 
 
 def _make_docs(david_lightfoot_html: str) -> tuple[dict, list[str]]:
@@ -51,6 +52,23 @@ def _make_opc_docs(path: Path, fmt: DocFormat, title: str) -> tuple[dict, list[s
     )
     embed_mre_opc(path, mre_xml, fmt)
     return {title: {"path": path, "fmt": fmt}}, [n["id"] for n in para_nodes]
+
+
+def _make_pdf_docs(path: Path, title: str) -> tuple[dict, list[str]]:
+    """hwpx/docx 대응 _make_opc_docs() 의 pdf 버전 -- embed_mre_pdf()로 path 를
+    in-place 갱신하고, run_agent() 의 path 기반 스키마({"path", "fmt"})로 만든다."""
+    stripped = parse_pdf(path)
+    para_nodes = [n for n in stripped if n["type"] == "paragraph"]
+    mre_xml = build_mre_xml(
+        {
+            "summary": "A short quarterly safety report.",
+            "headings": [f"heading for {n['id']}" for n in para_nodes],
+            "keywords": [f"kw-{n['id']}" for n in para_nodes],
+        },
+        stripped, title=title,
+    )
+    embed_mre_pdf(path, mre_xml)
+    return {title: {"path": path, "fmt": DocFormat.PDF}}, [n["id"] for n in para_nodes]
 
 
 def _scripted_client(turns: list[dict]) -> SimpleNamespace:
@@ -272,5 +290,69 @@ async def test_mixed_html_and_docx_docs_in_one_run(david_lightfoot_html, sample_
 async def test_opc_mre_not_found_raises(sample_docx):
     client = _scripted_client([])
     bad_docs = {_DOCX_TITLE: {"path": sample_docx, "fmt": DocFormat.DOCX}}  # never embed_mre_opc()'d
+    with pytest.raises(MRENotFoundError):
+        await run_agent("q", bad_docs, client=client, model="stub")
+
+
+# ─────────────────────────────────────────────
+# pdf docs (path 기반 스키마는 hwpx/docx 와 동일하게 {"path", "fmt"}, fmt=DocFormat.PDF)
+# ─────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_pdf_doc_expand_then_fetch_blocks_then_answer(sample_prose_pdf):
+    docs, pids = _make_pdf_docs(sample_prose_pdf, _PDF_TITLE)
+    client = _scripted_client([
+        {"action": "expand_document", "titles": [_PDF_TITLE]},
+        {"action": "fetch_blocks", "parameters": [{"title": _PDF_TITLE, "requests": [pids[0]]}]},
+        {"action": "answer", "content": "Answer from the pdf report."},
+        {"action": "check_sufficiency", "is_sufficient": True, "missing": ""},
+    ])
+
+    result = await run_agent("What does the report say?", docs, client=client, model="stub")
+
+    assert result.success
+    assert result.answer == "Answer from the pdf report."
+    assert pids[0] in result.retrieved_context
+
+
+@pytest.mark.asyncio
+async def test_pdf_doc_fetch_doc_shortcut(sample_prose_pdf):
+    docs, _ = _make_pdf_docs(sample_prose_pdf, _PDF_TITLE)
+    client = _scripted_client([
+        {"action": "fetch_doc", "titles": [_PDF_TITLE]},
+        {"action": "answer", "content": "Full pdf doc answer."},
+        {"action": "check_sufficiency", "is_sufficient": True, "missing": ""},
+    ])
+
+    result = await run_agent("q", docs, client=client, model="stub")
+
+    assert result.success
+    assert result.answer == "Full pdf doc answer."
+
+
+@pytest.mark.asyncio
+async def test_mixed_html_and_pdf_docs_in_one_run(david_lightfoot_html, sample_prose_pdf):
+    """docs dict 는 title 별로 html/path 기반(opc, pdf) 스키마를 자유롭게 섞을 수 있어야 한다."""
+    html_docs, _ = _make_docs(david_lightfoot_html)
+    pdf_docs, pdf_pids = _make_pdf_docs(sample_prose_pdf, _PDF_TITLE)
+    docs = {**html_docs, **pdf_docs}
+
+    client = _scripted_client([
+        {"action": "expand_document", "titles": [_PDF_TITLE]},
+        {"action": "fetch_blocks", "parameters": [{"title": _PDF_TITLE, "requests": [pdf_pids[0]]}]},
+        {"action": "answer", "content": "mixed-source answer"},
+        {"action": "check_sufficiency", "is_sufficient": True, "missing": ""},
+    ])
+
+    result = await run_agent("q", docs, client=client, model="stub")
+
+    assert result.success
+    assert result.answer == "mixed-source answer"
+
+
+@pytest.mark.asyncio
+async def test_pdf_mre_not_found_raises(sample_prose_pdf):
+    client = _scripted_client([])
+    bad_docs = {_PDF_TITLE: {"path": sample_prose_pdf, "fmt": DocFormat.PDF}}  # never embed_mre_pdf()'d
     with pytest.raises(MRENotFoundError):
         await run_agent("q", bad_docs, client=client, model="stub")

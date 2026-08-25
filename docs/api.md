@@ -15,6 +15,8 @@
 | `xml_builder.py` | pure string assembly of the final `<mre>` XML |
 | `reader.py` | reads a `<mre>` header back out of embedded HTML (`extract_mre_xml`) |
 | `hwp_adapter.py` | legacy HWP (OLE2) parsing, read-only (`parse_hwp`) |
+| `hwp_convert.py` | best-effort HWP -> docx/pdf conversion via external LibreOffice+H2Orestart (`convert_hwp`) |
+| `pdf_adapter.py` | PDF parsing, embed/fetch via file attachments (`parse_pdf`, `embed_mre_pdf`, `fetch_pdf`) |
 | `agent/` | opt-in agentic RAG loop — see [Agentic RAG](agentic-rag.md) |
 
 ## Generation
@@ -74,6 +76,28 @@
 ::: mre.parse_hwp
 
 ::: mre.hwp_adapter.build_structure_tree_hwp
+
+## Legacy HWP conversion (best-effort, external LibreOffice)
+
+::: mre.convert_hwp
+
+::: mre.LibreOfficeNotAvailableError
+
+::: mre.HwpConversionError
+
+## PDF adapter
+
+::: mre.parse_pdf
+
+::: mre.pdf_adapter.build_structure_tree_pdf
+
+::: mre.embed_mre_pdf
+
+::: mre.fetch_pdf
+
+::: mre.mre_xml_exists_pdf
+
+::: mre.extract_mre_xml_pdf
 
 ## Reading a header back out
 

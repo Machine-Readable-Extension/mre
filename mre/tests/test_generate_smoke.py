@@ -67,3 +67,30 @@ async def test_generate_mre_end_to_end_html(david_lightfoot_html):
         # ids get letter-prefixed during generation; just check node count matches
     n_paragraphs = sum(1 for n in nodes if n["type"] == "paragraph")
     assert result.mre_xml.count("<node id=") == n_paragraphs
+
+
+@pytest.mark.asyncio
+async def test_generate_mre_end_to_end_pdf(sample_prose_pdf):
+    from mre import extract_mre_xml_pdf
+    from mre.pdf_adapter import build_structure_tree_pdf
+
+    client = _fake_openai_client(None)
+    nodes_before = build_structure_tree_pdf(sample_prose_pdf)
+
+    result = await generate_mre(
+        sample_prose_pdf,
+        client=client,
+        model="stub-model",
+        title="Quarterly Safety Report",
+        fmt=DocFormat.PDF,
+    )
+
+    assert result.format is DocFormat.PDF
+    # pdf has no adapter-fingerprint concept (unlike html) -- root tag stays plain
+    assert result.mre_xml.startswith('<mre version="1.0">')
+    assert result.embedded_path == sample_prose_pdf
+    assert result.mre_xml.count("<node id=") == len(nodes_before)
+
+    # embedding round-trips through the actual file on disk, and page content is untouched
+    assert extract_mre_xml_pdf(sample_prose_pdf) == result.mre_xml
+    assert build_structure_tree_pdf(sample_prose_pdf) == nodes_before

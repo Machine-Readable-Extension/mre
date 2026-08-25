@@ -30,6 +30,13 @@ from mre.hwp_convert import (
     LibreOfficeNotAvailableError,
     convert_hwp,
 )
+from mre.pdf_adapter import (
+    embed_mre_pdf,
+    extract_mre_xml_pdf,
+    fetch_pdf,
+    mre_xml_exists_pdf,
+    parse_pdf,
+)
 from mre.reader import extract_mre_xml
 
 # 내장 어댑터(Wikipedia 등)는 mre.html_site_adapter 모듈 로드 시 이미 등록됐다. 플러그인
@@ -66,5 +73,10 @@ __all__ = [
     "HwpConversionError",
     "LibreOfficeNotAvailableError",
     "convert_hwp",
+    "embed_mre_pdf",
+    "extract_mre_xml_pdf",
+    "fetch_pdf",
+    "mre_xml_exists_pdf",
+    "parse_pdf",
     "extract_mre_xml",
 ]
