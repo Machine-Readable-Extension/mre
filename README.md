@@ -207,6 +207,15 @@ wiring MRE into a different agent loop instead. Full walkthrough:
 | HWP (legacy, OLE2) | built-in, parsing-only — `mre.hwp_adapter.parse_hwp()` | not implemented | not yet |
 | PDF | detected (`detect_format`) | not implemented — `generate_mre()` raises `NotImplementedError` | not yet |
 
+> ⚠️ **HWP has no embed path, and the one workaround has measured content loss.**
+> `mre.convert_hwp(path, target=DocFormat.DOCX)` shells out to an externally-installed
+> LibreOffice + [H2Orestart](https://github.com/ebandal/H2Orestart) (a community
+> reverse-engineered filter, not Hancom's own converter) so you can embed into the
+> converted docx/pdf instead. A revision-history entry vanished entirely in testing
+> against a real government document — verify important documents' output before
+> trusting it. See [Legacy HWP](https://machine-readable-extension.github.io/mre/formats/#legacy-hwp-parsing-only)
+> for the full fidelity numbers and usage.
+
 HTML support is a **site-adapter registry**, not a generic scraper — only
 `wikipedia.org` ships out of the box, but a new site can be registered
 in-process or shipped as an installable plugin package (an `mre.site_adapters`

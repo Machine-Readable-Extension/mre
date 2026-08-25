@@ -53,6 +53,31 @@ objects, hyperlinks, or tables). Tested against synthetic fixtures built by
 asides, but still not exhaustively battle-tested against every real-world `.hwp`
 quirk (heavy embedded objects, equations, revision marks).
 
+!!! warning "HWP has no embed path, and the one workaround has known content loss"
+    `mre.convert_hwp(path, target=DocFormat.DOCX)` shells out to an **externally
+    installed** LibreOffice + [H2Orestart](https://github.com/ebandal/H2Orestart) (a
+    community reverse-engineered HWP import filter, not Hancom's own converter) to
+    produce a `.docx`/`.pdf` you can then run through the normal `generate_mre()`/embed
+    pipeline. Measured against a real 27-table government document: opening prose
+    matched `parse_hwp()` character-for-character and ~86% of total text survived, but
+    a revision-history table entry was **not found anywhere** in the converted output —
+    genuine loss from the filter, not just this library's own table-cell scope limit.
+    Every call logs a `WARNING`. **Verify the converted output before trusting it for
+    anything table-heavy or otherwise structurally complex.**
+
+    Deliberately kept separate from `generate_mre()` — a hard external system
+    dependency this library can't pip-install, plus the measured content loss above,
+    mean it should never run implicitly. Call it explicitly, then feed its output into
+    the existing docx/pdf pipeline yourself:
+
+    ```python
+    from mre import DocFormat, convert_hwp, generate_mre
+
+    docx_path = convert_hwp("report.hwp", target=DocFormat.DOCX)  # needs soffice on PATH
+    result = await generate_mre(docx_path, client=client, model=model,
+                                 title="...", fmt=DocFormat.DOCX)
+    ```
+
 ## Adding a new HTML site
 
 HTML support is a **site-adapter registry**, not a generic scraper — a page's

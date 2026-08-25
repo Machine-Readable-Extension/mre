@@ -88,7 +88,8 @@ and evaluation code lives at
 - [Install](install.md) — get the package
 - [Quick start](quickstart.md) — generate an MRE header and fetch a paragraph back out
 - [Agentic RAG](agentic-rag.md) — the opt-in `mre.agent` retrieval loop
-- [Document formats](formats.md) — HTML/HWPX/DOCX support and adding a new site
+- [Document formats](formats.md) — HTML/HWPX/DOCX/HWP/PDF support and adding a new site
+  (⚠️ HWP has no embed path — see [Legacy HWP](formats.md#legacy-hwp-parsing-only))
 - [Specification](spec.md) — the `<mre>` XML schema
 - [API Reference](api.md) — generated from docstrings
 
