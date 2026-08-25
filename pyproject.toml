@@ -3,7 +3,12 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mre"
+# PyPI distribution name -- "mre" itself is already taken by an unrelated
+# project (a "Maker Regular Expressions" tool). The import name is
+# unaffected: `pip install machine-readable-extension` still gives you
+# `import mre` (see [tool.setuptools] packages= below), the same split
+# beautifulsoup4/bs4 or pyyaml/yaml use.
+name = "machine-readable-extension"
 version = "1.1.0"
 description = "Machine-Readable Extension (MRE): generate LLM-navigable structured headers for HTML/HWPX/DOCX documents, for agentic RAG"
 readme = { file = "README.md", content-type = "text/markdown" }

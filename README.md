@@ -94,17 +94,18 @@ and evaluation code lives at
 
 ## Install
 
-Not yet published to PyPI — install from this repository:
-
 ```bash
-pip install -e .
+pip install machine-readable-extension
 ```
+
+The PyPI distribution is named `machine-readable-extension` (`mre` itself was
+already taken by an unrelated project) — `import mre` either way.
 
 The keyword-grounding [repair pass](https://machine-readable-extension.github.io/mre/quickstart/#repair)
 has an optional fuzzy-matching fallback:
 
 ```bash
-pip install -e ".[fuzzy]"
+pip install "machine-readable-extension[fuzzy]"
 ```
 
 ## Quick start
