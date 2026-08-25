@@ -1,8 +1,21 @@
-"""The progressive loop — a complete entry point (``run_agent``) implementing
-metadata-only, two-stage disclosure.
-"""
-
 from __future__ import annotations
+
+"""
+Progressive 루프 — metadata-only 2단계 공개 방식의 완성형 진입점(run_agent).
+
+core/pipeline.py 의 MREAgent._run_progressive 를 이 라이브러리 배포 경계 안으로 옮겨왔다.
+원본과 갈라지는 지점:
+  - ablation_mode 분기, dataset 이름 기반 SA/LA 판단, AgentTiming(턴별 상세 계측)은
+    뺐다 — 이 서브패키지는 progressive 모드 하나만 다루고, 답변 형식도 SA/LA 구분 없이
+    중립 문구 하나로 통일했다(mre.agent.prompts 참조). 대신 mre.llm_util 의 stats
+    누적기(prompt/completion 토큰 + 호출 수)를 그대로 재사용한다.
+  - `_fetch_blocks_v3`(core/pipeline.py 자체 구현) 대신 mre.fetch_block()/mre.fetch_opc() 를
+    쓴다 — generate_mre() 가 만든 문서를 그대로 소비할 수 있고(html 은 generator-fingerprint
+    불일치 감지도 자동으로 딸려온다 — opc(hwpx/docx) 는 아직 그 체크가 없다), 문서별 "html"
+    vs "path" 키로 어느 쪽을 쓸지 판단한다(_is_opc_doc 참조).
+  - GuidedLLM(in-process vLLM)이 아니라 OpenAI-호환 client 하나로 동작한다
+    (mre.agent.llm 참조) — mre.generate_mre() 와 동일한 관례.
+"""
 
 import html
 import json
@@ -11,7 +24,7 @@ from dataclasses import dataclass, field
 
 import openai
 
-from mre import fetch_block
+from mre import extract_mre_xml_opc, fetch_block, fetch_opc
 from mre.agent import llm as _llm
 from mre.agent.prompts import ANSWER_FORMAT, SYSTEM_PROMPT
 from mre.agent.schema import (
@@ -27,89 +40,90 @@ from mre.reader import extract_mre_xml
 
 
 class MRENotFoundError(Exception):
-    """Raised when a document's HTML has no embedded ``<mre>`` header."""
+    """문서 html에서 <mre> 헤더를 찾지 못했을 때."""
 
     def __init__(self, title: str):
         self.title = title
-        super().__init__(f"No MRE header found: {title}")
+        super().__init__(f"MRE 헤더 없음: {title}")
 
 
 class BlockFetchError(Exception):
-    """Raised when a document can't be found, or a requested paragraph id yields no result."""
+    """문서를 찾을 수 없거나 요청한 pid 의 fetch 결과가 없을 때."""
 
     def __init__(self, title: str, pid: str | None = None, reason: str = ""):
         self.title = title
         self.pid = pid
         self.reason = reason
-        detail = f"pid={pid!r}" if pid else "document not found"
-        super().__init__(f"Block fetch failed [{title}] {detail}: {reason}")
+        detail = f"pid={pid!r}" if pid else "문서 없음"
+        super().__init__(f"블록 fetch 실패 [{title}] {detail}: {reason}")
 
 
 @dataclass
 class AgentResult:
     answer: str
     retrieved_context: str
-    """Combined text of every block fetched via fetch_blocks/fetch_doc."""
+    """fetch_blocks/fetch_doc 로 가져온 모든 블록의 합산 텍스트."""
     num_turns: int
     success: bool
     error: str = ""
     action_log: list = field(default_factory=list)
-    """Per-turn record of the LLM's output. [{"turn": int, "action": str, "raw": str}, ...]"""
+    """각 턴의 LLM 출력 기록. [{"turn": int, "action": str, "raw": str}, ...]"""
     messages: list = field(default_factory=list)
-    """The agent's full conversation history (system/user/assistant messages)."""
+    """에이전트 전체 대화 기록 (system/user/assistant 메시지 리스트)."""
     stats: dict = field(default_factory=_new_stats)
-    """Accumulated token/call counts — same shape as mre.generate_mre()'s stats (mre.llm_util._new_stats)."""
+    """누적 토큰/호출 수 — mre.generate_mre() 의 stats 와 동일 형태(mre.llm_util._new_stats)."""
 
 
 def _normalize_title(title: str) -> str:
-    """Normalize a title for matching: decode HTML entities, apply NFC
-    normalization, and trim whitespace.
-
-    Keeps an LLM echoing a title back with mixed-in HTML encoding, or a
-    different Unicode normalization form, from failing to match the
-    ``docs`` dict's keys.
-    """
+    """Title 매칭 정규화 — HTML 엔터티 디코딩 + NFC 정규화 + 공백 정리.
+    LLM 이 title 을 echo 할 때 HTML 엔코딩이 섞이거나 유니코드 정규화 형태가 달라지는
+    것이 docs dict 의 키와 어긋나는 것을 막는다."""
     title = html.unescape(title or "")
     title = unicodedata.normalize("NFC", title)
     return title.strip()
 
 
-def _fetch_blocks(params_list: list[dict], docs: dict[str, dict]) -> str:
-    """Take ``[{"title": "...", "requests": ["p1", "p3"]}, ...]``, fetch each
-    paragraph's text via ``mre.fetch_block()``, and concatenate them.
+def _is_opc_doc(doc: dict) -> bool:
+    """docs[title] 이 html(사이트 어댑터) 문서인지 opc(hwpx/docx) 문서인지 판별.
+    schema: html -> {"html", "url"}, opc -> {"path", "fmt"} (mre.DocFormat.HWPX/DOCX)."""
+    return "path" in doc
 
-    Raises:
-        BlockFetchError: If a document isn't found, or a requested id
-            yields no result.
-    """
+
+def _fetch_one(doc: dict, pid: str) -> str:
+    if _is_opc_doc(doc):
+        return fetch_opc(doc["path"], pid, doc["fmt"])
+    return fetch_block(doc["url"], doc["html"], pid)
+
+
+def _fetch_blocks(params_list: list[dict], docs: dict[str, dict]) -> str:
+    """[{"title": "...", "requests": ["p1", "p3"]}, ...] 형태를 받아 mre.fetch_block()
+    (html 문서) 또는 mre.fetch_opc()(hwpx/docx 문서)로 각 단락 텍스트를 가져와 이어붙인다.
+    문서가 없거나 pid 결과가 없으면 BlockFetchError."""
     results: list[str] = []
     for param in params_list:
         title = _normalize_title(param.get("title", ""))
         pids = param.get("requests", [])
         if title not in docs:
-            raise BlockFetchError(title, reason="document not found")
+            raise BlockFetchError(title, reason="문서를 찾을 수 없습니다")
         for pid in pids:
-            content = fetch_block(docs[title]["url"], docs[title]["html"], pid)
+            content = _fetch_one(docs[title], pid)
             if content:
                 results.append(f"[{title} :: {pid}]\n{content}")
             else:
-                raise BlockFetchError(title, pid=pid, reason="no result for this block")
+                raise BlockFetchError(title, pid=pid, reason="블록 결과 없음")
     return "\n\n".join(results)
 
 
 @dataclass
 class _LoopState:
-    """Mutable state accumulated across run_agent()'s turn loop, shared by
-    the action handlers. An internal container, not exposed outside
-    run_agent() (distinct from AgentResult).
-    """
+    """run_agent() 턴 반복 동안 누적되는 가변 상태 -- 액션 핸들러들이 공유해서 읽고 쓴다.
+    run_agent() 바깥에 노출되지 않는 내부 전용 컨테이너(AgentResult 와는 별개)."""
     messages: list[dict]
     expanded_titles: set[str] = field(default_factory=set)
     retrieved_blocks: list[str] = field(default_factory=list)
     action_log: list[dict] = field(default_factory=list)
     seen_fetches: set[tuple[str, str]] = field(default_factory=set)
-    # A draft answer held back by the answer-interception flow — while not
-    # None, the next turn is restricted to check_sufficiency only.
+    # answer 가로채기로 보류 중인 초안 -- None 이 아니면 다음 턴은 check_sufficiency 만 허용.
     pending_answer_content: str | None = None
     num_turns: int = 0
     stats: dict = field(default_factory=_new_stats)
@@ -144,7 +158,7 @@ def _handle_expand_document(
 def _handle_fetch_doc(
     state: _LoopState, action: dict, raw_action: str, docs: dict[str, dict], query: str,
 ) -> None:
-    """Handles the case where metadata alone was enough to decide the whole document is needed."""
+    """metadata 만 보고 문서 전체가 필요하다고 판단한 경우."""
     titles_req = action.get("titles", [])[:MAX_DOCS_PER_TURN]
     requested_pairs = {(_normalize_title(t), "full") for t in titles_req}
     new_pairs = requested_pairs - state.seen_fetches
@@ -216,9 +230,7 @@ def _handle_fetch_blocks(
 
 
 def _handle_check_sufficiency(state: _LoopState, action: dict, raw_action: str) -> AgentResult | None:
-    """Only ever seen right after an answer is intercepted. Returns the
-    final AgentResult here if the answer is confirmed sufficient.
-    """
+    """answer 가로채기 직후에만 등장. 충분하다고 확인되면 여기서 최종 AgentResult 를 반환한다."""
     is_sufficient = bool(action.get("is_sufficient"))
     missing = (action.get("missing") or "").strip()
     state.messages.append({"role": "assistant", "content": raw_action})
@@ -248,9 +260,8 @@ def _handle_answer(state: _LoopState, action: dict, raw_action: str) -> None:
         )})
         return
 
-    # Without announcing it in the prompt ahead of time, the model's draft
-    # answer is intercepted and used as the basis for a check_sufficiency
-    # question — the next turn is then locked to CHECK_SUFFICIENCY_SCHEMA.
+    # 프롬프트에 미리 알리지 않고, 모델이 낸 answer 초안을 가로채 그 내용 자체를
+    # 근거로 check_sufficiency 를 되묻는다 — 다음 턴은 CHECK_SUFFICIENCY_SCHEMA 로 고정.
     draft_content = action.get("content", "")
     state.messages.append({"role": "assistant", "content": raw_action})
     state.messages.append({"role": "user", "content": (
@@ -266,9 +277,7 @@ def _handle_answer(state: _LoopState, action: dict, raw_action: str) -> None:
 async def _forced_fallback_answer(
     state: _LoopState, query: str, client: openai.AsyncOpenAI, model: str,
 ) -> AgentResult:
-    """Turn limit reached — force an answer from the accumulated blocks
-    alone (free text, not a JSON action).
-    """
+    """턴 한도 도달 -- 누적 블록만으로 강제 답변(자유 텍스트, JSON 액션 아님)."""
     fallback_instruction = (
         "[System] No more retrieval rounds available. Using ONLY the blocks "
         "fetched so far, give the answer to the question. Output the answer "
@@ -281,9 +290,9 @@ async def _forced_fallback_answer(
         _merge_stats(state.stats, call_stats)
     except Exception as e:
         final_answer = ""
-        fallback_err = f"forced-answer generation failed: {e}"
+        fallback_err = f"forced-answer 생성 실패: {e}"
     else:
-        fallback_err = "max_turns exceeded — forced an answer from accumulated blocks"
+        fallback_err = "max_turns 초과 — 누적 블록으로 강제 답변"
     state.action_log.append({"turn": state.num_turns, "action": "forced_answer", "raw": final_answer})
 
     return AgentResult(
@@ -301,36 +310,34 @@ async def run_agent(
     model: str,
     max_turns: int = MAX_TURNS,
 ) -> AgentResult:
-    """Answer ``query`` via progressive two-stage disclosure (metadata-only, then full disclosure of picked documents).
+    """Progressive 2단계 공개 방식(metadata-only → 지목한 문서만 전체 공개)으로 query 에 답한다.
 
-    Args:
-        query: The user's question.
-        docs: ``{title: {"html": <MRE-embedded document HTML>, "url": <the
-            original URL fetch_block() uses to pick a site adapter>}, ...}``.
-            The ``embedded_html`` from a ``generate_mre(fmt=DocFormat.HTML, ...)``
-            result can be passed in directly.
-        client: OpenAI-compatible async client — same convention as
-            ``mre.generate_mre()``: the caller always provides it, and the
-            library never hardcodes a default model or backend.
-        model: Model name to pass to ``client``.
-        max_turns: Turn limit. Defaults to ``mre.agent.schema.MAX_TURNS``
-            (12) — a 6-hop budget, since each expand+fetch pair costs 2 turns.
-
-    Returns:
-        The agent's final result.
-
-    Raises:
-        MRENotFoundError: If a candidate document has no embedded MRE header.
-        BlockFetchError: If a requested paragraph can't be resolved.
+    Parameters
+    ----------
+    query : 사용자 질문.
+    docs  : title 별로 두 스키마 중 하나를 섞어서 쓸 수 있다 — 문서마다 원본 포맷이 달라도
+            같은 docs dict 안에 같이 넣으면 된다.
+              - html : {"html": <mre 가 임베드된 문서 HTML>, "url": <fetch_block() 이
+                사이트 어댑터를 고르는 데 쓰는 원본 URL>}. generate_mre(fmt=DocFormat.HTML,
+                ...) 결과의 embedded_html 을 그대로 넣으면 된다.
+              - hwpx/docx : {"path": <mre 가 임베드된 hwpx/docx 파일 경로>,
+                "fmt": DocFormat.HWPX 또는 DocFormat.DOCX}. generate_mre(fmt=DocFormat.HWPX
+                또는 DOCX, ...) 가 in-place 로 갱신한 embedded_path 를 그대로 넣으면 된다.
+                fetch_block() 의 generator-fingerprint 불일치 감지는 이 경로엔 아직 없다.
+    client, model : mre.generate_mre() 와 동일한 관례 — OpenAI-호환 비동기 클라이언트와
+            모델 이름을 호출자가 직접 넘긴다. 라이브러리는 기본 모델/백엔드를 강제하지 않는다.
+    max_turns : 턴 한도. 기본 mre.agent.schema.MAX_TURNS(12) — expand+fetch 한 세트당
+            2턴 소모를 감안한 6-hop 예산.
     """
     normalized_titles = [_normalize_title(t) for t in docs]
     docs = {_normalize_title(k): v for k, v in docs.items()}
 
-    # ── Stage-one header: a metadata-only view of every candidate document ──
+    # ── 1단계 헤더: 모든 후보 문서의 metadata-only 뷰 ──
     raw_mre_cache: dict[str, str] = {}
     metadata_parts: list[str] = []
     for title in normalized_titles:
-        raw_mre = extract_mre_xml(docs[title]["html"])
+        doc = docs[title]
+        raw_mre = extract_mre_xml_opc(doc["path"]) if _is_opc_doc(doc) else extract_mre_xml(doc["html"])
         if not raw_mre:
             raise MRENotFoundError(title)
         raw_mre_cache[title] = raw_mre
@@ -371,7 +378,7 @@ async def run_agent(
             return AgentResult(
                 answer="", retrieved_context="\n\n".join(state.retrieved_blocks),
                 num_turns=state.num_turns, success=False,
-                error=f"JSON parse failed: {raw_action[:300]}",
+                error=f"JSON 파싱 실패: {raw_action[:300]}",
                 action_log=state.action_log, messages=state.messages, stats=state.stats,
             )
 
@@ -394,15 +401,15 @@ async def run_agent(
             return AgentResult(
                 answer="", retrieved_context="\n\n".join(state.retrieved_blocks),
                 num_turns=state.num_turns, success=False,
-                error=f"Unknown action: {act!r}  |  raw={raw_action[:200]}",
+                error=f"알 수 없는 액션: {act!r}  |  raw={raw_action[:200]}",
                 action_log=state.action_log, messages=state.messages, stats=state.stats,
             )
 
-    # ── Guard rail: never force an answer if nothing was ever fetched ──
+    # ── 방어선: fetch 이력이 전혀 없으면 강제 답변하지 않는다 ──
     if not state.retrieved_blocks:
         return AgentResult(
             answer="", retrieved_context="", num_turns=state.num_turns, success=False,
-            error="no fetch ever performed — refusing to answer from the MRE header alone",
+            error="fetch 미실행 — 답변 거부 (MRE 헤더만으로 답변 시도)",
             action_log=state.action_log, messages=state.messages, stats=state.stats,
         )
 

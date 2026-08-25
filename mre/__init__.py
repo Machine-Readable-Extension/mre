@@ -18,18 +18,18 @@ from mre.html_site_adapter import (
 from mre.opc_adapter import (
     OPCAdapter,
     embed_mre_opc,
+    extract_mre_xml_opc,
     fetch_opc,
     get_opc_adapter,
     parse_opc,
 )
 from mre.generate import MREGenerationResult, generate_mre
+from mre.hwp_adapter import parse_hwp
 from mre.reader import extract_mre_xml
 
-# Built-in adapters (Wikipedia, etc.) are already registered by the time
-# mre.html_site_adapter is loaded. Plugin discovery must run here, after
-# every other export of the mre package is already bound, so that a plugin
-# importing `from mre import HTMLSiteAdapter` (the documented convention)
-# doesn't hit a circular import.
+# 내장 어댑터(Wikipedia 등)는 mre.html_site_adapter 모듈 로드 시 이미 등록됐다. 플러그인
+# 발견은 여기, mre 패키지의 다른 모든 export 가 이미 바인딩된 뒤에 실행해야 한다 — 플러그인이
+# 관례대로 `from mre import HTMLSiteAdapter` 로 임포트할 때 순환 임포트가 나지 않도록.
 discover_plugin_adapters()
 
 __all__ = [
@@ -51,10 +51,12 @@ __all__ = [
     "registered_sites",
     "OPCAdapter",
     "embed_mre_opc",
+    "extract_mre_xml_opc",
     "fetch_opc",
     "get_opc_adapter",
     "parse_opc",
     "MREGenerationResult",
     "generate_mre",
+    "parse_hwp",
     "extract_mre_xml",
 ]

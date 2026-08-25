@@ -17,6 +17,7 @@ with `fetch_blocks`.
 ```python
 import asyncio
 import openai
+from mre import DocFormat
 from mre.agent import run_agent
 
 async def main():
@@ -27,7 +28,11 @@ async def main():
             "html": embedded_html,  # from generate_mre()'s embedded_html
             "url": "https://en.wikipedia.org/wiki/Pleasure_Cove",  # picks the site adapter
         },
-        # ... more candidate documents
+        "Pleasure Cove (press release)": {
+            "path": "pleasure_cove.hwpx",  # from generate_mre()'s embedded_path
+            "fmt": DocFormat.HWPX,  # or DocFormat.DOCX
+        },
+        # ... more candidate documents, html and hwpx/docx freely mixed
     }
 
     result = await run_agent(
@@ -43,8 +48,15 @@ async def main():
 asyncio.run(main())
 ```
 
-Each `docs` entry needs both `"html"` (the MRE-embedded document) and
-`"url"` (forwarded to `fetch_block()` to pick the right site adapter).
+Each `docs` entry is one of two shapes, picked per-title — a single `docs`
+dict can mix both:
+
+- html: `"html"` (the MRE-embedded document) + `"url"` (forwarded to
+  `fetch_block()` to pick the right site adapter).
+- hwpx/docx: `"path"` (the MRE-embedded file, in-place-updated by
+  `generate_mre()`'s `embedded_path`) + `"fmt"` (`DocFormat.HWPX` or
+  `DocFormat.DOCX`, forwarded to `fetch_opc()`).
+
 `run_agent()` returns an `AgentResult` — `answer`, `success`, `num_turns`,
 the full `messages`/`action_log` for inspection, and `stats` (prompt/
 completion tokens, call count — same shape as `generate_mre()`'s `stats`).
@@ -63,6 +75,7 @@ into a different agent loop (LangChain, a hand-rolled one, ...) instead:
 | `mre.agent.CHECK_SUFFICIENCY_SCHEMA` | schema for the one-turn "is this answer actually supported by what was retrieved?" check |
 | `mre.agent.metadata_view(mre_xml)` | strips `<tree>` down to metadata-only, for the first-stage view |
 | `mre.reader.extract_mre_xml(html)` | reads the raw `<mre>` block back out of embedded HTML |
+| `mre.extract_mre_xml_opc(path)` | reads the raw `<mre>` block back out of an embedded hwpx/docx file |
 
 `run_agent()` answers in whatever length and form the question calls for —
 there's no short-answer/long-answer mode switch, since that distinction
@@ -72,5 +85,7 @@ the answer.
 Only progressive disclosure is implemented so far. `mre.agent` uses an
 OpenAI-compatible async client the same way `generate_mre()` does (so a
 local vLLM server works too, via `base_url`), and only works with formats
-whose site adapter implements `fetch` (currently HTML/Wikipedia — see
-[Document formats](formats.md)).
+that implement `fetch` — currently HTML/Wikipedia and hwpx/docx (see
+[Document formats](formats.md)); PDF/HWP raise `NotImplementedError` from
+`generate_mre()` itself, so they never reach `run_agent()` as an embeddable
+candidate document.

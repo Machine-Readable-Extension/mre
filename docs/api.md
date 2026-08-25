@@ -14,6 +14,7 @@
 | `repair.py` | missing/misaligned paragraph detection and targeted regeneration |
 | `xml_builder.py` | pure string assembly of the final `<mre>` XML |
 | `reader.py` | reads a `<mre>` header back out of embedded HTML (`extract_mre_xml`) |
+| `hwp_adapter.py` | legacy HWP (OLE2) parsing, read-only (`parse_hwp`) |
 | `agent/` | opt-in agentic RAG loop — see [Agentic RAG](agentic-rag.md) |
 
 ## Generation
@@ -65,6 +66,14 @@
 ::: mre.fetch_opc
 
 ::: mre.get_opc_adapter
+
+::: mre.extract_mre_xml_opc
+
+## Legacy HWP (parsing-only)
+
+::: mre.parse_hwp
+
+::: mre.hwp_adapter.build_structure_tree_hwp
 
 ## Reading a header back out
 

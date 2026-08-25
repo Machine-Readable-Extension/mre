@@ -1,13 +1,13 @@
-"""Document format auto-detection, based on magic bytes.
-
-Supported formats: html, pdf, hwp, hwpx, docx.
-File extensions are never consulted — bytes/stream input may have no
-extension, or an unreliable one. The zip-based formats (hwpx/docx) share
-the same PK magic, so a matching zip is opened and disambiguated by its
-internal entries.
-"""
-
 from __future__ import annotations
+
+"""
+문서 포맷 자동 감지 — 매직 바이트 기반.
+
+지원 포맷: html, pdf, hwp, hwpx, docx.
+확장자는 보지 않는다 — bytes/스트림 입력엔 확장자가 없거나 신뢰할 수 없기 때문.
+zip 계열(hwpx/docx)은 공통 PK 매직만으로는 구분이 안 되므로, zip을 열어
+내부 엔트리로 한 번 더 구분한다.
+"""
 
 import io
 import zipfile
@@ -27,24 +27,20 @@ class DocFormat(str, Enum):
 
 
 class FormatDetectionError(ValueError):
-    """Raised when ``source`` matches none of the supported formats."""
+    """source가 지원 포맷(html/pdf/hwp/hwpx/docx) 중 어느 것으로도 식별되지 않을 때."""
 
 
 _PDF_MAGIC = b"%PDF-"
 _OLE2_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # legacy HWP (Compound File Binary)
 _ZIP_MAGICS = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")  # local / empty / spanned
 
-_PEEK_SIZE = 8  # smallest header length covering the longest magic (OLE2, 8 bytes)
-_HTML_SCAN_SIZE = 4096  # scan range for an HTML marker once binary magics miss
+_PEEK_SIZE = 8  # 가장 긴 매직(OLE2, 8바이트)을 덮는 최소 헤더 길이
+_HTML_SCAN_SIZE = 4096  # 바이너리 매직에 안 걸린 나머지 중 HTML 여부를 찾는 스캔 범위
 _HTML_MARKERS = (b"<!doctype html", b"<html")
 
 
 def _read_header(source: SourceLike, n: int) -> bytes:
-    """Return the first ``n`` bytes of ``source``.
-
-    A file-like object is restored to its original position afterward, so
-    it can still be read again by the caller.
-    """
+    """source 앞 n바이트를 반환. 파일 객체는 읽은 뒤 원래 위치로 되돌려 재사용 가능하게 둔다."""
     if isinstance(source, (str, Path)):
         with open(source, "rb") as f:
             return f.read(n)
@@ -56,7 +52,7 @@ def _read_header(source: SourceLike, n: int) -> bytes:
             return source.read(n)
         finally:
             source.seek(pos)
-    raise TypeError(f"Unsupported source type: {type(source)!r}")
+    raise TypeError(f"지원하지 않는 source 타입: {type(source)!r}")
 
 
 def _open_as_zip(source: SourceLike) -> zipfile.ZipFile:
@@ -70,15 +66,15 @@ def _open_as_zip(source: SourceLike) -> zipfile.ZipFile:
             return zipfile.ZipFile(source)
         finally:
             source.seek(pos)
-    raise TypeError(f"Unsupported source type: {type(source)!r}")
+    raise TypeError(f"지원하지 않는 source 타입: {type(source)!r}")
 
 
 def _detect_zip_subtype(source: SourceLike) -> DocFormat:
-    """Open a zip container that passed the PK magic check and tell hwpx from docx.
+    """PK 매직을 통과한 zip 컨테이너 내부를 열어 hwpx/docx를 구분한다.
 
-    - docx (OOXML): contains ``word/document.xml``.
-    - hwpx: the ``mimetype`` entry reads ``application/hwp+zip``, or the
-      archive contains ``Contents/content.hpf`` or ``Contents/header.xml``.
+    - docx (OOXML): word/document.xml 포함.
+    - hwpx: mimetype 엔트리 내용이 application/hwp+zip 이거나 Contents/content.hpf,
+      Contents/header.xml 중 하나를 포함.
     """
     try:
         with _open_as_zip(source) as zf:
@@ -95,29 +91,27 @@ def _detect_zip_subtype(source: SourceLike) -> DocFormat:
                 if mimetype == "application/hwp+zip":
                     return DocFormat.HWPX
     except zipfile.BadZipFile as e:
-        raise FormatDetectionError(f"Has a zip magic but isn't a valid zip: {e}") from e
+        raise FormatDetectionError(f"zip 매직은 있으나 유효한 zip이 아님: {e}") from e
 
     raise FormatDetectionError(
-        "Zip container, but none of the hwpx/docx signatures "
-        "(word/document.xml, Contents/content.hpf, Contents/header.xml, "
-        "mimetype=application/hwp+zip) were found."
+        "zip 컨테이너이지만 hwpx/docx 시그니처(word/document.xml, "
+        "Contents/content.hpf, Contents/header.xml, mimetype=application/hwp+zip) "
+        "중 어느 것도 찾지 못함."
     )
 
 
 def detect_format(source: SourceLike) -> DocFormat:
-    """Detect ``source``'s document format from its magic bytes.
+    """source(파일 경로 / bytes / seekable 파일 객체)의 문서 포맷을 매직 바이트로 감지한다.
 
-    Args:
-        source: What to detect — a file path, bytes, or a seekable
-            file-like object. A file-like object is restored to its
-            original position after this call.
+    Parameters
+    ----------
+    source : str | Path | bytes | bytearray | BinaryIO
+        감지 대상. 파일 객체는 seek/tell을 지원해야 하며, 호출 후 원래 위치로 복원된다.
 
-    Returns:
-        The detected format.
-
-    Raises:
-        FormatDetectionError: If ``source`` matches none of the five
-            supported formats.
+    Raises
+    ------
+    FormatDetectionError
+        5개 지원 포맷 중 어느 시그니처와도 매칭되지 않을 때.
     """
     header = _read_header(source, _PEEK_SIZE)
 
@@ -133,5 +127,5 @@ def detect_format(source: SourceLike) -> DocFormat:
         return DocFormat.HTML
 
     raise FormatDetectionError(
-        "No signature matched any supported format (html/pdf/hwp/hwpx/docx)."
+        "지원 포맷(html/pdf/hwp/hwpx/docx) 중 어느 시그니처도 매칭되지 않음."
     )

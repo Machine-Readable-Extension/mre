@@ -1,7 +1,5 @@
-import shutil
 import zipfile
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
 
@@ -13,21 +11,7 @@ from mre.opc_adapter import (
     build_structure_tree_hwpx,
 )
 
-_FIXTURES = Path(__file__).parent / "fixtures"
-
-
-@pytest.fixture
-def sample_docx(tmp_path) -> Path:
-    dst = tmp_path / "sample.docx"
-    shutil.copy(_FIXTURES / "sample.docx", dst)
-    return dst
-
-
-@pytest.fixture
-def sample_hwpx(tmp_path) -> Path:
-    dst = tmp_path / "sample.hwpx"
-    shutil.copy(_FIXTURES / "sample.hwpx", dst)
-    return dst
+# sample_docx / sample_hwpx fixtures live in conftest.py (shared with test_agent.py).
 
 
 # ─────────────────────────────────────────────
@@ -113,6 +97,25 @@ def test_embed_then_exists_and_reparse_still_works(fmt, fixture_name, request):
     # embedding mre.xml must not corrupt the original document parts
     nodes_after = get_opc_adapter(fmt).extract(path)
     assert any(n["type"] == "paragraph" for n in nodes_after)
+
+
+@pytest.mark.parametrize("fmt,fixture_name", [(DocFormat.DOCX, "sample_docx"), (DocFormat.HWPX, "sample_hwpx")])
+def test_extract_mre_xml_opc_roundtrips_embedded_content(fmt, fixture_name, request):
+    from mre import extract_mre_xml_opc
+
+    path = request.getfixturevalue(fixture_name)
+    assert extract_mre_xml_opc(path) is None  # nothing embedded yet
+
+    mre_xml = "<mre version=\"1.0\"><metadata><title>T</title></metadata><tree></tree></mre>"
+    embed_mre_opc(path, mre_xml, fmt)
+
+    assert extract_mre_xml_opc(path) == mre_xml
+
+
+def test_extract_mre_xml_opc_missing_file_returns_none(tmp_path):
+    from mre import extract_mre_xml_opc
+
+    assert extract_mre_xml_opc(tmp_path / "does_not_exist.docx") is None
 
 
 # ─────────────────────────────────────────────

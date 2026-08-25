@@ -177,7 +177,8 @@ request, turn by turn, is a separate concern kept out of the base package.
 The opt-in `mre.agent` subpackage implements that loop, using **progressive
 disclosure**: every candidate document starts out showing only its
 `<metadata>`, and the agent expands specific documents' full `<tree>` (or
-fetches them whole) before drilling into individual paragraphs.
+fetches them whole) before drilling into individual paragraphs. Candidate
+documents can be HTML, HWPX, or DOCX, freely mixed in the same run.
 
 ```python
 from mre.agent import run_agent
@@ -203,7 +204,8 @@ wiring MRE into a different agent loop instead. Full walkthrough:
 | HTML (Wikipedia) | built-in site adapter | `<script type="application/mre+xml">` inside `<head>` | `fetch_block()` |
 | HWPX | built-in | extra `mre.xml` entry in the zip archive | `fetch_opc()` |
 | DOCX | built-in (body paragraphs only — table cells are out of scope) | extra `mre.xml` entry in the zip archive | `fetch_opc()` |
-| PDF, HWP | detected (`detect_format`) | not implemented — `generate_mre()` raises `NotImplementedError` | not yet |
+| HWP (legacy, OLE2) | built-in, parsing-only — `mre.hwp_adapter.parse_hwp()` | not implemented | not yet |
+| PDF | detected (`detect_format`) | not implemented — `generate_mre()` raises `NotImplementedError` | not yet |
 
 HTML support is a **site-adapter registry**, not a generic scraper — only
 `wikipedia.org` ships out of the box, but a new site can be registered

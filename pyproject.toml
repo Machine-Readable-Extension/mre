@@ -29,6 +29,7 @@ dependencies = [
     "openai>=1.0",
     "beautifulsoup4>=4.9",
     "lxml>=4.6",
+    "olefile>=0.46",
 ]
 
 [project.optional-dependencies]
@@ -80,4 +81,9 @@ warn_redundant_casts = true
 [[tool.mypy.overrides]]
 # Optional dependency (see the `fuzzy` extra above) with no bundled types.
 module = "thefuzz.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Required dependency (legacy HWP parsing, see hwp_adapter.py) with no bundled types.
+module = "olefile.*"
 ignore_missing_imports = true
