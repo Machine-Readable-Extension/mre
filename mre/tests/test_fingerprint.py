@@ -30,7 +30,9 @@ def _fetch(html, node_id):
 
 def test_fingerprint_is_deterministic():
     adapter = HTMLSiteAdapter(name="x", domains=("x.example",), extract=_extract_v1, strip=_strip, embed=_embed)
-    assert compute_adapter_fingerprint(adapter) == compute_adapter_fingerprint(adapter)
+    first = compute_adapter_fingerprint(adapter)
+    second = compute_adapter_fingerprint(adapter)
+    assert first == second
 
 
 def test_fingerprint_changes_when_extract_changes():

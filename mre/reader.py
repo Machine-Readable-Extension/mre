@@ -38,8 +38,10 @@ def extract_mre_xml(html: str) -> str | None:
     """
     soup = BeautifulSoup(html, "html.parser")
     script = soup.find("script", {"type": "application/mre+xml"})
-    if not script or not script.string:
+    if script is None:
         return None
-    mre_text = script.string.strip()
-    mre_text = _RESOURCES_RE.sub("", mre_text)
+    raw = script.string
+    if raw is None:
+        return None
+    mre_text = _RESOURCES_RE.sub("", raw.strip())
     return mre_text.strip()
