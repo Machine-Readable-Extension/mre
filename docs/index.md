@@ -95,4 +95,4 @@ and evaluation code lives at
 
 ## License
 
-MIT — see [LICENSE](https://github.com/Machine-Readable-Extension/mre/blob/master/LICENSE).
+MIT — see [LICENSE](https://github.com/Machine-Readable-Extension/py-mre/blob/master/LICENSE).

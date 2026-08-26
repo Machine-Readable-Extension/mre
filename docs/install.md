@@ -19,7 +19,7 @@ pip install "py-mre[fuzzy]"
 To install from source instead (for development, or to track `master`):
 
 ```bash
-git clone https://github.com/Machine-Readable-Extension/mre.git
+git clone https://github.com/Machine-Readable-Extension/py-mre.git
 cd mre
 pip install -e .
 ```

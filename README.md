@@ -1,6 +1,6 @@
 # Machine-Readable-Extension(MRE)
 
-[![Tests](https://github.com/Machine-Readable-Extension/mre/actions/workflows/tests.yml/badge.svg)](https://github.com/Machine-Readable-Extension/mre/actions/workflows/tests.yml)
+[![Tests](https://github.com/Machine-Readable-Extension/py-mre/actions/workflows/tests.yml/badge.svg)](https://github.com/Machine-Readable-Extension/py-mre/actions/workflows/tests.yml)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=Machine-Readable-Extension_mre&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=Machine-Readable-Extension_mre)
 [![Bugs](https://sonarcloud.io/api/project_badges/measure?project=Machine-Readable-Extension_mre&metric=bugs)](https://sonarcloud.io/summary/new_code?id=Machine-Readable-Extension_mre)
 [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=Machine-Readable-Extension_mre&metric=coverage)](https://sonarcloud.io/summary/new_code?id=Machine-Readable-Extension_mre)
@@ -224,6 +224,37 @@ entry point). See [`examples/mre-example-adapter/`](examples/mre-example-adapter
 for a working reference, and
 [Document formats](https://machine-readable-extension.github.io/mre/formats/)
 for the full guide to adding a site.
+
+## Community site adapters — bring your own site, no MRE adoption required
+
+We'd love more sites supported — and **the site owner doesn't need to be involved.**
+Anyone can write and publish a **parsing-only** adapter for a site that has never
+heard of MRE: visitors get clean, LLM-ready text out of it, with no header ever
+published on the site itself. Only `extract`/`strip` need to do real work; `embed`
+is a required field on `HTMLSiteAdapter` but can be a harmless no-op if you're not
+publishing MRE headers:
+
+```python
+from mre import HTMLSiteAdapter
+
+ADAPTER = HTMLSiteAdapter(
+    name="my-site",
+    domains=("example.com",),
+    extract=my_extract_fn,         # soup -> [{"type": "heading"|"paragraph", ...}, ...]
+    strip=my_strip_fn,             # -> LLM-ready node list
+    embed=lambda html, xml: html,  # no-op: this site doesn't publish MRE headers
+)
+```
+
+Ship it as an installable plugin — an `mre.site_adapters` entry point, exactly like
+[`examples/mre-example-adapter/`](examples/mre-example-adapter) — and anyone who
+`pip install`s your package gets clean parsing for that site automatically, no PR to
+`mre` itself needed. Full guide, including the entry-point plugin setup:
+[Adding a new HTML site](https://machine-readable-extension.github.io/mre/formats/#adding-a-new-html-site).
+
+If a site *does* want to go further and publish real MRE headers (so agents can jump
+straight to a paragraph by ID instead of just getting clean text), implement
+`embed`/`fetch` for real — see [What it looks like](#what-it-looks-like) above.
 
 ## License
 
