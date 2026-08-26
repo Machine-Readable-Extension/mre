@@ -93,7 +93,14 @@ def _strip_appendix_sections(soup: BeautifulSoup) -> list[tuple[int, str]]:
     appendix: list[tuple[int, str]] = []
 
     # 1) Parsoid: <section aria-labelledby="External_links"> 통째 삭제
+    # 실제 위키피디아 문서는 <section>이 중첩된다(상위 섹션 안에 하위 섹션) --
+    # find_all("section")은 중첩 여부와 무관하게 전부 flat하게 반환하므로, 앞선
+    # 반복에서 상위 섹션을 decompose()하면 그 안에 중첩돼 있던 하위 섹션도 (bs4가
+    # decompose 시 하위 트리 전체의 attrs/contents를 재귀적으로 비우기 때문에) 이미
+    # 리스트에 담겨 있던 참조가 망가진다. .decomposed로 그런 죽은 참조를 건너뛴다.
     for sec in list(soup.find_all("section")):
+        if getattr(sec, "decomposed", False):
+            continue
         labelled_by = str(sec.get("aria-labelledby") or "").strip()
         first_heading = sec.find(_HEADING_TAG_RE)
         htext = first_heading.get_text(strip=True) if first_heading else ""
@@ -125,6 +132,11 @@ def _strip_appendix_sections(soup: BeautifulSoup) -> list[tuple[int, str]]:
     # container 자식 재귀 없이 top-level heading 만 봐도 대부분 케이스는 커버되지만,
     # 안전하게 descendants 도 훑어 heading 위치를 잡고 sibling-체인 으로 삭제한다.
     for div in list(container.find_all("div", class_=lambda c: c and "mw-heading" in c)):
+        # 위 (1)과 같은 이유 -- 앞선 반복의 sibling-체인 decompose가 이 div를 이미
+        # 하위 트리째 날려버렸을 수 있다 (예: 두 heading div 사이의 wrapper 안에
+        # mw-heading div가 중첩된 드문 경우).
+        if getattr(div, "decomposed", False):
+            continue
         is_app, text, level = _is_appendix_heading_div(div)
         if not is_app:
             continue
