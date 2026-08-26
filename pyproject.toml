@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 # (see [tool.setuptools] packages= below), the same split beautifulsoup4/bs4
 # or pyyaml/yaml use.
 name = "py-mre"
-version = "1.1.0"
+version = "1.1.1"
 description = "Machine-Readable Extension (MRE): generate LLM-navigable structured headers for HTML/HWPX/DOCX documents, for agentic RAG"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
@@ -54,8 +54,8 @@ docs = ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.24"]
 typecheck = ["mypy>=1.8"]
 
 [project.urls]
-Homepage = "https://github.com/Machine-Readable-Extension/mre"
-Repository = "https://github.com/Machine-Readable-Extension/mre"
+Homepage = "https://github.com/Machine-Readable-Extension/py-mre"
+Repository = "https://github.com/Machine-Readable-Extension/py-mre"
 
 [tool.setuptools]
 # find: 자동 탐색 대신 명시적으로 나열 — mre.agent 는 옵트인 서브패키지지만 "import

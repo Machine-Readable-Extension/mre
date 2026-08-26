@@ -1,4 +1,4 @@
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 from mre.format_detect import DocFormat, FormatDetectionError, detect_format
 from mre.html_site_adapter import (
