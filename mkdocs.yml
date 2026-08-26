@@ -1,6 +1,6 @@
 site_name: Machine-Readable Extension
 site_description: A producer-side document standard that lets LLM agents read documents precisely
-site_url: https://machine-readable-extension.github.io/mre/
+site_url: https://machine-readable-extension.github.io/py-mre/
 repo_url: https://github.com/Machine-Readable-Extension/mre
 repo_name: Machine-Readable-Extension/mre
 

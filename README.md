@@ -4,13 +4,13 @@
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=Machine-Readable-Extension_mre&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=Machine-Readable-Extension_mre)
 [![Bugs](https://sonarcloud.io/api/project_badges/measure?project=Machine-Readable-Extension_mre&metric=bugs)](https://sonarcloud.io/summary/new_code?id=Machine-Readable-Extension_mre)
 [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=Machine-Readable-Extension_mre&metric=coverage)](https://sonarcloud.io/summary/new_code?id=Machine-Readable-Extension_mre)
-[![Docs](https://img.shields.io/badge/docs-machine--readable--extension.github.io-blue)](https://machine-readable-extension.github.io/mre/)
+[![Docs](https://img.shields.io/badge/docs-machine--readable--extension.github.io-blue)](https://machine-readable-extension.github.io/py-mre/)
 
 **Machine-Readable Extension (MRE)** — a producer-side document standard and
 navigation structure that lets LLM agents read a document precisely, instead
 of consuming its raw, markup-heavy source.
 
-Full docs, including the auto-generated API reference: **[machine-readable-extension.github.io/mre](https://machine-readable-extension.github.io/mre/)**
+Full docs, including the auto-generated API reference: **[machine-readable-extension.github.io/py-mre](https://machine-readable-extension.github.io/py-mre/)**
 
 ## Why
 
@@ -83,7 +83,7 @@ stable ID, a `<desc>` naming what the paragraph asserts, and `<keys>` —
 distinctive entity names that let an agent bridge across documents when
 chasing a multi-hop query. Paragraph text itself is *not* in the header —
 it's fetched on demand by ID from the source document, by a separate
-retrieval-side parser. Full schema: [Specification](https://machine-readable-extension.github.io/mre/spec/).
+retrieval-side parser. Full schema: [Specification](https://machine-readable-extension.github.io/py-mre/spec/).
 
 Early experiments on MRE-based agentic RAG show up to a 48.4% relative F1
 improvement over baselines on multi-hop QA benchmarks, by letting the agent
@@ -101,7 +101,7 @@ pip install py-mre
 The PyPI distribution is named `py-mre` (`mre` itself was already taken by an
 unrelated project) — `import mre` either way.
 
-The keyword-grounding [repair pass](https://machine-readable-extension.github.io/mre/quickstart/#repair)
+The keyword-grounding [repair pass](https://machine-readable-extension.github.io/py-mre/quickstart/#repair)
 has an optional fuzzy-matching fallback:
 
 ```bash
@@ -168,7 +168,7 @@ whose adapter doesn't implement `fetch` (a generation-only adapter),
 
 `generate_mre()`/`fetch_block()` also guard against a document outliving the
 adapter that generated it (a `generator-fingerprint` mismatch) — see
-[Detecting a stale adapter](https://machine-readable-extension.github.io/mre/quickstart/#detecting-a-stale-adapter)
+[Detecting a stale adapter](https://machine-readable-extension.github.io/py-mre/quickstart/#detecting-a-stale-adapter)
 in the docs.
 
 ## Agentic RAG
@@ -196,7 +196,7 @@ print(result.answer, result.success, result.stats)
 Every piece `run_agent()` is built from — the system prompt, the guided-
 decoding schemas, the metadata view — is independently importable too, for
 wiring MRE into a different agent loop instead. Full walkthrough:
-[Agentic RAG](https://machine-readable-extension.github.io/mre/agentic-rag/).
+[Agentic RAG](https://machine-readable-extension.github.io/py-mre/agentic-rag/).
 
 ## Supported document formats
 
@@ -206,7 +206,7 @@ wiring MRE into a different agent loop instead. Full walkthrough:
 | HWPX | built-in | extra `mre.xml` entry in the zip archive | `fetch_opc()` |
 | DOCX | built-in (body paragraphs only — table cells are out of scope) | extra `mre.xml` entry in the zip archive | `fetch_opc()` |
 | HWP (legacy, OLE2) | built-in, parsing-only — `mre.hwp_adapter.parse_hwp()` | not implemented | not yet |
-| PDF | built-in, paragraph text only — see [Legacy HWP / PDF](https://machine-readable-extension.github.io/mre/formats/) | `mre.xml` as a PDF file attachment | `fetch_pdf()` |
+| PDF | built-in, paragraph text only — see [Legacy HWP / PDF](https://machine-readable-extension.github.io/py-mre/formats/) | `mre.xml` as a PDF file attachment | `fetch_pdf()` |
 
 > ⚠️ **HWP has no embed path, and the one workaround has measured content loss.**
 > `mre.convert_hwp(path, target=DocFormat.DOCX)` shells out to an externally-installed
@@ -214,7 +214,7 @@ wiring MRE into a different agent loop instead. Full walkthrough:
 > reverse-engineered filter, not Hancom's own converter) so you can embed into the
 > converted docx/pdf instead. A revision-history entry vanished entirely in testing
 > against a real government document — verify important documents' output before
-> trusting it. See [Legacy HWP](https://machine-readable-extension.github.io/mre/formats/#legacy-hwp-parsing-only)
+> trusting it. See [Legacy HWP](https://machine-readable-extension.github.io/py-mre/formats/#legacy-hwp-parsing-only)
 > for the full fidelity numbers and usage.
 
 HTML support is a **site-adapter registry**, not a generic scraper — only
@@ -222,7 +222,7 @@ HTML support is a **site-adapter registry**, not a generic scraper — only
 in-process or shipped as an installable plugin package (an `mre.site_adapters`
 entry point). See [`examples/mre-example-adapter/`](examples/mre-example-adapter)
 for a working reference, and
-[Document formats](https://machine-readable-extension.github.io/mre/formats/)
+[Document formats](https://machine-readable-extension.github.io/py-mre/formats/)
 for the full guide to adding a site.
 
 ## Community site adapters — bring your own site, no MRE adoption required
@@ -250,7 +250,7 @@ Ship it as an installable plugin — an `mre.site_adapters` entry point, exactly
 [`examples/mre-example-adapter/`](examples/mre-example-adapter) — and anyone who
 `pip install`s your package gets clean parsing for that site automatically, no PR to
 `mre` itself needed. Full guide, including the entry-point plugin setup:
-[Adding a new HTML site](https://machine-readable-extension.github.io/mre/formats/#adding-a-new-html-site).
+[Adding a new HTML site](https://machine-readable-extension.github.io/py-mre/formats/#adding-a-new-html-site).
 
 If a site *does* want to go further and publish real MRE headers (so agents can jump
 straight to a paragraph by ID instead of just getting clean text), implement
