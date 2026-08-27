@@ -33,40 +33,52 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class HTMLSiteAdapter:
-    """사이트 하나에 대한 HTML 파싱/임베딩 로직 묶음.
+    """The bundle of HTML parsing/embedding logic for a single site.
 
-    preprocess : (선택) BeautifulSoup 문서를 extract() 전에 in-place로 정리한다
-                 (예: 부록 section 제거, 짧은 section 문단 통합). 반환값(제거된 부록 heading
-                 목록)은 이 라이브러리(paragraph-granularity 전용, <section> 미생성)에서는
-                 쓰지 않는다 — section-granularity 를 나중에 포팅할 때를 위해 시그니처만
-                 남겨둠. None(기본)이면 전처리 없이 extract()를 soup에 그대로 적용한다.
-                 **주의**: 여기서 문서를 변형하면, 그 변형된 순서를 기준으로 문단 id(pN)가
-                 부여된다 — 이 id는 나중에 원본(미변형) 문서를 다시 걷는 fetch 쪽 파서와
-                 반드시 같은 전처리 규칙을 공유해야 한다 (예: core/pipeline.py의
-                 _fetch_blocks_v3가 생성 시점과 동일하게 _strip_appendix_sections +
-                 _consolidate_short_sections를 다시 적용). 규칙이 어긋나면 pid가 엉뚱한
-                 블록을 가리키게 된다.
-    extract : BeautifulSoup 파싱된 문서 -> heading/paragraph 노드 리스트
+    preprocess : (optional) cleans the BeautifulSoup document in-place before
+                 extract() runs (e.g. removing appendix sections, merging short
+                 section paragraphs). The return value (the list of removed
+                 appendix headings) is unused by this library (paragraph-
+                 granularity only, no <section> nodes) — the signature is kept
+                 for a future section-granularity port. None (default) means
+                 extract() runs on the soup with no preprocessing.
+                 **Caution**: transforming the document here means paragraph
+                 ids (pN) are assigned based on the transformed order — this
+                 id must later share the exact same preprocessing rules with
+                 whatever fetch-side parser re-walks the original (untransformed)
+                 document (e.g. core/pipeline.py's _fetch_blocks_v3 re-applies
+                 _strip_appendix_sections + _consolidate_short_sections
+                 identically to generation time). If the rules diverge, a pid
+                 ends up pointing at the wrong block.
+    extract : BeautifulSoup-parsed document -> list of heading/paragraph nodes
               ({"type": "heading", "level", "text"} | {"type": "paragraph", "id", "text"})
-    assign_ids : (선택) extract() 결과(문단 타입만)의 id를 title 기반으로 in-place 재작성.
-                 None(기본)이면 extract()가 부여한 id(보통 "p1", "p2", ...)를 그대로 쓴다.
-                 mre_generator3.py 와 동일하게, Wikipedia 어댑터는 이 훅으로 제목 첫 글자
-                 접두어를 붙인다(cross-document id collision 완화).
-    strip   : extract() 결과 -> LLM 전송용으로 정리된 노드 리스트
-    embed   : (원본 html, 조립된 mre xml) -> mre가 삽입된 html.
-              전처리로 변형한 soup가 아니라 항상 "원본" html 문자열에 삽입한다 — 부록
-              section 등은 실제 문서 렌더링에서는 그대로 남아 있어야 하므로.
-    fetch   : (선택) (mre가 embed된 html, node id) -> 그 문단의 전체(비절단) 텍스트.
-              RAG 에이전트가 실제로 문단 내용을 가져올 때 쓰는 콜러블 — extract()가
-              생성-시점에 만드는 "LLM에 보여줄 짧은 미리보기 텍스트"와 달리, 여기서는
-              길이 제한 없이 원문 그대로 반환해야 한다. id 는 "full"이면 문서 전체
-              텍스트(모든 문단 이어붙임)를 반환한다(하나만 보고 문서 전체가 필요한지
-              판단하는 워크플로용). 생성 시점과 동일한 전처리(preprocess)를 다시 적용한
-              뒤 같은 순서로 walk 해야 id 매핑이 어긋나지 않는다 — extract()와 별개
-              구현이어도 반드시 같은 규칙을 공유해야 한다(파일 상단 preprocess 설명 참조).
-              None(기본)이면 이 어댑터로 fetch 는 지원 안 함(생성 전용 어댑터).
-    domains : 이 어댑터가 처리하는 도메인 목록. 서브도메인까지 매치된다 —
-              domains=("wikipedia.org",)면 en.wikipedia.org, ko.wikipedia.org 등 전부 매치.
+    assign_ids : (optional) rewrites the ids of extract()'s result (paragraph
+                 nodes only) in-place, based on title. None (default) keeps the
+                 ids extract() assigned (usually "p1", "p2", ...). Matching
+                 mre_generator3.py, the Wikipedia adapter uses this hook to
+                 prepend the title's first letter (mitigating cross-document
+                 id collisions).
+    strip   : extract()'s result -> node list cleaned up for sending to the LLM
+    embed   : (original html, assembled mre xml) -> html with mre inserted.
+              Always inserts into the "original" html string, never the soup
+              mutated by preprocess — appendix sections etc. must remain intact
+              in the actual rendered document.
+    fetch   : (optional) (html with mre embedded, node id) -> that paragraph's
+              full (untruncated) text. The callable a RAG agent uses to actually
+              fetch paragraph content — unlike the short preview text extract()
+              produces at generation time for showing the LLM, this must return
+              the raw text with no length limit. If id is "full", returns the
+              whole document's text (all paragraphs concatenated) — for
+              workflows that decide whether the whole document is needed after
+              seeing just one paragraph. Must re-apply the same preprocessing
+              used at generation time and walk in the same order, or the id
+              mapping breaks — even as a separate implementation from extract(),
+              it must share the exact same rules (see the preprocess note
+              above). None (default) means this adapter doesn't support fetch
+              (generation-only adapter).
+    domains : the list of domains this adapter handles. Subdomains match too —
+              domains=("wikipedia.org",) matches en.wikipedia.org,
+              ko.wikipedia.org, etc.
     """
     name: str
     extract: Callable[[BeautifulSoup], list[dict]]
@@ -79,23 +91,28 @@ class HTMLSiteAdapter:
 
 
 def compute_adapter_fingerprint(adapter: HTMLSiteAdapter) -> str:
-    """extract/preprocess/assign_ids/fetch 네 함수의 소스 코드를 해시해 어댑터
-    fingerprint 를 계산한다.
+    """Compute an adapter fingerprint by hashing the source code of the four
+    functions extract/preprocess/assign_ids/fetch.
 
-    이 네 함수가 (같이든 따로든) "id 가 어느 문단을 가리키는가"를 결정한다 —
-    extract/preprocess/assign_ids 는 생성 시점의 id 부여, fetch 는 그 id 로 다시 문단을
-    찾아내는 쪽. 넷 중 하나라도 바뀌면 fingerprint 가 자동으로 달라진다 — 어댑터
-    작성자가 버전을 손으로 올리는 걸 잊어도 놓치지 않는다(semver 수동 관리의 약점을
-    피하려고 이 방식을 선택했다). generate_mre() 가 생성 시점에 이 값을
-    <mre generator-fingerprint="..."> 로 문서에 새기고, fetch_block() 이 fetch 시점에
-    다시 계산해 비교한다 — 다르면 그 사이 어댑터 로직이 바뀌었다는 뜻이다.
+    These four functions (together or separately) determine "which paragraph
+    does this id point to" — extract/preprocess/assign_ids assign ids at
+    generation time, and fetch locates the paragraph again by that id. If any
+    one of the four changes, the fingerprint automatically changes too — so an
+    adapter author who forgets to bump a version by hand doesn't slip through
+    (this scheme was chosen specifically to avoid the weakness of manual semver
+    bumping). generate_mre() stamps this value into the document at generation
+    time as <mre generator-fingerprint="...">, and fetch_block() recomputes and
+    compares it at fetch time — a mismatch means the adapter's logic changed in
+    between.
 
-    코드가 아주 사소하게(변수명, 주석, 포맷팅)만 바뀌어도 값이 달라지는 건 알고 있는
-    한계다 — 그런 false positive 는 "id 가 조용히 엉뚱한 문단을 가리키는" false
-    negative 보다 훨씬 안전한 실패 방향이라 받아들인다.
+    A known limitation: even a purely cosmetic change (variable names,
+    comments, formatting) changes the value. That false positive is accepted
+    as a much safer failure mode than the false negative of "an id silently
+    points to the wrong paragraph."
 
-    소스를 읽을 수 없는 함수(컴파일된 확장, C 구현 등)는 repr() 로 폴백한다 — 그런
-    경우 fingerprint 가 코드 변경을 못 잡아낼 수 있지만 최소한 크래시는 안 한다.
+    Functions whose source can't be read (compiled extensions, C
+    implementations, etc.) fall back to repr() — in that case the fingerprint
+    may miss real code changes, but at least it won't crash.
     """
     parts: list[str] = []
     for fn in (adapter.extract, adapter.preprocess, adapter.assign_ids, adapter.fetch):
@@ -111,7 +128,7 @@ def compute_adapter_fingerprint(adapter: HTMLSiteAdapter) -> str:
 
 
 class UnknownSiteError(LookupError):
-    """URL의 도메인에 등록된 HTMLSiteAdapter가 없고 fallback도 지정되지 않았을 때."""
+    """Raised when no HTMLSiteAdapter is registered for the URL's domain and no fallback was given."""
 
 
 # name -> adapter (domains 는 adapter.domains 에 있음)
@@ -119,10 +136,11 @@ _REGISTRY: dict[str, HTMLSiteAdapter] = {}
 
 
 def register_site(adapter: HTMLSiteAdapter) -> None:
-    """adapter.domains 목록으로 어댑터를 등록한다. 같은 adapter.name 으로 다시
-    등록하면 덮어쓴다 — 플러그인이 내장 어댑터를 의도적으로 대체할 수 있게 하기
-    위함(자동 발견 순서는 _register_builtin_sites() 이후 플러그인이므로, 플러그인이
-    같은 name 을 쓰면 내장 어댑터를 이긴다)."""
+    """Register the adapter under its adapter.domains list. Re-registering with
+    the same adapter.name overwrites the previous entry — this lets a plugin
+    deliberately replace a builtin adapter (auto-discovery runs plugins after
+    _register_builtin_sites(), so a plugin using the same name wins over the
+    builtin one)."""
     if not adapter.domains:
         raise ValueError(f"adapter.domains 가 비어있음: {adapter.name!r}")
     if adapter.name in _REGISTRY:
@@ -136,7 +154,7 @@ def _domain_matches(netloc: str, domain: str) -> bool:
 
 
 def detect_site(url: str) -> str | None:
-    """url의 netloc으로 등록된 사이트 name을 찾는다. 매칭 실패 시 None."""
+    """Find the registered site name matching url's netloc. Returns None if no match."""
     netloc = urlparse(url).netloc
     if not netloc:
         return None
@@ -147,11 +165,12 @@ def detect_site(url: str) -> str | None:
 
 
 def get_site_adapter(url: str, *, fallback: HTMLSiteAdapter | None = None) -> HTMLSiteAdapter:
-    """url에 맞는 HTMLSiteAdapter를 반환.
+    """Return the HTMLSiteAdapter matching url.
 
-    매칭되는 등록 사이트가 없으면 fallback이 주어진 경우 그것을 쓰고,
-    없으면 UnknownSiteError를 낸다 (아직 범용 HTML 어댑터가 없으므로
-    묵묵히 잘못된 구조로 파싱하는 것보다 명시적으로 실패시키는 쪽을 택함).
+    If no registered site matches, uses fallback when one is given; otherwise
+    raises UnknownSiteError (since there's no generic HTML adapter yet, this
+    chooses to fail explicitly rather than silently parsing with the wrong
+    structure).
     """
     name = detect_site(url)
     if name is not None:
@@ -162,19 +181,20 @@ def get_site_adapter(url: str, *, fallback: HTMLSiteAdapter | None = None) -> HT
 
 
 def registered_sites() -> dict[str, tuple[str, ...]]:
-    """현재 등록된 {사이트 name: domains} 목록 — 내장 + 플러그인 자동 발견 결과 전부."""
+    """The current {site name: domains} listing — builtins plus everything auto-discovered from plugins."""
     return {name: adapter.domains for name, adapter in _REGISTRY.items()}
 
 
 def parse_html(
     url: str, html: str, title: str, *, fallback: HTMLSiteAdapter | None = None
 ) -> list[dict]:
-    """url로 사이트를 감지해 맞는 어댑터로 html을 파싱하고,
-    LLM 전송용으로 정리된 노드 리스트(strip 결과)를 반환한다.
+    """Detect the site from url, parse html with the matching adapter, and
+    return the node list cleaned up for the LLM (the strip() result).
 
-    adapter.preprocess가 있으면 extract() 전에, adapter.assign_ids가 있으면 extract() 직후
-    (title 기반 id 재작성)에 적용한다 — 그래야 이 함수가 돌려주는 문단 id 가 실제 생성
-    경로(generate_mre)와 동일하게 나온다."""
+    If adapter.preprocess exists it's applied before extract(); if
+    adapter.assign_ids exists it's applied right after extract() (title-based
+    id rewriting) — this keeps the paragraph ids this function returns
+    identical to what the real generation path (generate_mre) produces."""
     adapter = get_site_adapter(url, fallback=fallback)
     soup = BeautifulSoup(html, "lxml")
     if adapter.preprocess is not None:
@@ -186,13 +206,14 @@ def parse_html(
 
 
 class FetchNotSupportedError(NotImplementedError):
-    """매칭된 HTMLSiteAdapter 가 fetch 를 구현하지 않았을 때(생성 전용 어댑터)."""
+    """Raised when the matched HTMLSiteAdapter doesn't implement fetch (a generation-only adapter)."""
 
 
 class GeneratorFingerprintMismatch(RuntimeError):
-    """strict=True 에서, 문서에 새겨진 generator-fingerprint 가 지금 설치된 어댑터의
-    fingerprint 와 다를 때 — 이 문서가 생성된 이후 어댑터의 파싱 로직이 바뀌어
-    id-to-paragraph 매핑이 어긋났을 수 있다는 뜻."""
+    """Raised under strict=True when the generator-fingerprint stamped in the
+    document differs from the currently installed adapter's fingerprint —
+    meaning the adapter's parsing logic changed since this document was
+    generated, and the id-to-paragraph mapping may have drifted."""
 
 
 _MRE_ROOT_TAG_RE = re.compile(r"<mre\b([^>]*)>")
@@ -233,18 +254,20 @@ def _check_generator_fingerprint(adapter: HTMLSiteAdapter, html: str, *, strict:
 def fetch_block(
     url: str, html: str, node_id: str, *, fallback: HTMLSiteAdapter | None = None, strict: bool = False
 ) -> str:
-    """url로 사이트를 감지해 맞는 어댑터의 fetch() 로 node_id 문단의 전체 텍스트를 가져온다.
+    """Detect the site from url and fetch node_id's full paragraph text via the matching adapter's fetch().
 
-    generate_mre() 가 만든 MRE 를 실제로 소비하는 RAG 에이전트가 이 함수 하나로 어떤
-    사이트의 문서든 동일하게 문단을 가져올 수 있다 — 에이전트 코드가 "이 문서가
-    Wikipedia 인지" 알 필요가 없다. 매칭된 어댑터가 fetch 를 구현하지 않았으면
-    FetchNotSupportedError.
+    Lets a RAG agent that consumes an MRE produced by generate_mre() fetch a
+    paragraph the same way for any site through this one function — the agent
+    code never needs to know "is this document Wikipedia?". Raises
+    FetchNotSupportedError if the matched adapter doesn't implement fetch.
 
-    fetch 전에 문서에 새겨진 generator-fingerprint(있다면)를 지금 설치된 어댑터의
-    fingerprint 와 비교한다(compute_adapter_fingerprint 참조) — 다르면 어댑터가
-    이 문서 생성 이후 바뀐 것이므로 id 매핑이 어긋났을 수 있다는 경고를 로그로 남긴다.
-    strict=True 면 경고 대신 GeneratorFingerprintMismatch 를 던진다. 문서에
-    fingerprint 자체가 없으면(이 기능 도입 전 생성 등) 비교를 건너뛴다."""
+    Before fetching, compares the generator-fingerprint stamped in the
+    document (if any) against the currently installed adapter's fingerprint
+    (see compute_adapter_fingerprint) — a mismatch logs a warning that the
+    adapter changed since this document was generated and the id mapping may
+    have drifted. Under strict=True, raises GeneratorFingerprintMismatch
+    instead of warning. If the document has no fingerprint at all (e.g.
+    generated before this feature existed), the comparison is skipped."""
     adapter = get_site_adapter(url, fallback=fallback)
     if adapter.fetch is None:
         raise FetchNotSupportedError(
@@ -564,9 +587,10 @@ _ENTRY_POINT_GROUP = "mre.site_adapters"
 
 
 def discover_plugin_adapters() -> None:
-    """설치된 패키지 중 'mre.site_adapters' entry point 를 스캔해 자동 등록한다.
-    mre 를 import 할 때 mre/__init__.py 가 자동으로 한 번 호출한다 — 직접 호출할 필요는
-    보통 없고, 프로세스 실행 중에 새 어댑터 패키지를 설치한 뒤 재발견하고 싶을 때만 쓴다."""
+    """Scan installed packages for the 'mre.site_adapters' entry point and auto-register them.
+    mre/__init__.py calls this automatically once when mre is imported — you usually don't need
+    to call it directly, only when you've installed a new adapter package mid-process and want
+    to re-discover it."""
     for ep in entry_points(group=_ENTRY_POINT_GROUP):
         try:
             obj = ep.load()

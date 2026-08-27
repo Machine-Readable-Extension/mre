@@ -188,7 +188,7 @@ def embed_mre_pdf(path: str | Path, mre_xml: str) -> None:
 
 
 def mre_xml_exists_pdf(path: str | Path) -> bool:
-    """path에 이미 mre.xml이 첨부되어 있는지 여부."""
+    """Whether mre.xml is already attached to path."""
     try:
         return _MRE_ATTACHMENT_NAME in pypdf.PdfReader(str(path)).attachments
     except (pypdf.errors.PdfReadError, FileNotFoundError):
@@ -196,11 +196,13 @@ def mre_xml_exists_pdf(path: str | Path) -> bool:
 
 
 def extract_mre_xml_pdf(path: str | Path) -> str | None:
-    """path에 첨부된 mre.xml 원문을 반환한다. 없으면 None.
+    """Return the raw content of the mre.xml attached to path. None if absent.
 
-    mre.opc_adapter.extract_mre_xml_opc()의 pdf 대응. 재-embed로 인해 이론상 여러
-    버전이 남아있을 수 있어도(_remove_existing_mre_attachment이 embed 시점엔 정리하지만,
-    이 함수 자체는 방어적으로) 가장 최근 것[-1]을 진짜로 취급한다."""
+    The PDF counterpart to mre.opc_adapter.extract_mre_xml_opc(). Even though
+    multiple versions could theoretically linger from re-embedding
+    (_remove_existing_mre_attachment already cleans up at embed time, but this
+    function stays defensive about it), the most recent one [-1] is treated as
+    authoritative."""
     try:
         entries = pypdf.PdfReader(str(path)).attachments.get(_MRE_ATTACHMENT_NAME)
     except (pypdf.errors.PdfReadError, FileNotFoundError):
@@ -214,6 +216,7 @@ def extract_mre_xml_pdf(path: str | Path) -> str | None:
 
 
 def fetch_pdf(path: str | Path, node_id: str) -> str:
-    """path에서 node_id 단락의 전체 텍스트를 가져온다. id="full"이면 문서 전체 텍스트.
-    못 찾으면 빈 문자열(예외 아님) -- fetch_opc()와 동일 계약."""
+    """Fetch node_id's full paragraph text from path. If id="full", returns the
+    whole document's text. Returns an empty string (not an exception) if not
+    found -- same contract as fetch_opc()."""
     return fetch_paragraph_by_id(build_structure_tree_pdf(path), node_id)

@@ -57,32 +57,40 @@ async def generate_mre(
     misalign_retries: int = _MISALIGN_MAX_RETRIES,
     embed: bool = True,
 ) -> MREGenerationResult:
-    """source로부터 MRE XML을 생성한다.
+    """Generate MRE XML from source.
 
     Parameters
     ----------
-    source : format=html이면 원문 HTML 텍스트(str). hwpx/docx/pdf면 파일 경로(str | Path).
-    client : LLM 호출에 쓸 OpenAI-호환 비동기 클라이언트. openai 공식 SDK든 vLLM
-             OpenAI-compatible 서버든 무엇이든 가능 — base_url만 다르면 됨.
-    model  : client에 넘길 모델 이름. 라이브러리가 기본값을 강제하지 않으므로
-             호출자가 항상 명시해야 한다.
-    title  : MRE <metadata><title>에 들어갈 문서 제목. 자동 추출하지 않는다 —
-             호출자가 넘긴다 (문서 소스마다 제목 위치가 제각각이라서).
-    url    : format=html일 때 사이트별 파싱 어댑터를 고르는 데 쓰는 문서 원본 URL.
-             html 소스는 원문 텍스트(str)라 그대로 detect_format에 넘기면 "파일
-             경로"로 오인되므로(자세한 이유는 mre.format_detect 참조), fmt를
-             명시하지 않은 경우 url이 주어지면 그 자체로 fmt=HTML로 확정한다.
-    fmt    : 포맷을 직접 지정해 자동 감지를 건너뛴다. 미지정 시
-             (url이 있으면 HTML) -> detect_format(source) 순으로 판단.
-    html_fallback_adapter : url의 도메인이 등록되지 않았을 때 쓸 대체 HTML 어댑터.
-    repair : 꼬리 누락(headings/keywords 배열이 문단 수보다 짧아 뒤가 비는 것) 재생성
-             pass 실행 여부. 기본 켜짐 (mre_generator3.py CLI의 기본과 동일).
-    repair_misaligned : keyword grounding 실패(인접 문단 엔티티가 섞여 들어온 경우)까지
-             재생성할지. 기본 꺼짐 — mre_generator3.py에서 이 재생성이 cross-paragraph
-             검색 신호를 지워 retrieval precision을 떨어뜨리는 회귀가 확인된 옵션.
-    embed  : True(기본)면 결과를 문서에 실제로 삽입한다 — html은 삽입된 새 문자열을
-             반환, hwpx/docx는 source 파일을 in-place로 갱신한다. False면 mre_xml만
-             만들고 문서에는 손대지 않는다.
+    source : the raw HTML text (str) when format=html; a file path (str | Path)
+             for hwpx/docx/pdf.
+    client : the OpenAI-compatible async client used for LLM calls. Can be the
+             official openai SDK or any OpenAI-compatible backend like vLLM —
+             only the base_url differs.
+    model  : the model name passed to client. The library does not enforce a
+             default, so the caller must always specify it.
+    title  : the document title that goes into MRE's <metadata><title>. Not
+             auto-extracted — the caller supplies it (title placement varies
+             too much across document sources).
+    url    : the document's original URL, used to pick a per-site parsing
+             adapter when format=html. Since an html source is raw text (str),
+             passing it straight to detect_format would be mistaken for a
+             "file path" (see mre.format_detect for details), so when fmt is
+             not given, supplying url alone is enough to settle fmt=HTML.
+    fmt    : specify the format directly to skip auto-detection. When omitted,
+             resolution order is (HTML if url is given) -> detect_format(source).
+    html_fallback_adapter : fallback HTML adapter used when url's domain isn't
+             registered.
+    repair : whether to run the tail-gap repair pass (headings/keywords arrays
+             shorter than the paragraph count, leaving the tail empty). On by
+             default (matches mre_generator3.py CLI's default).
+    repair_misaligned : whether to also repair keyword-grounding failures
+             (entities from an adjacent paragraph bleeding in). Off by default —
+             mre_generator3.py found this regeneration erases cross-paragraph
+             retrieval signal and hurts retrieval precision.
+    embed  : if True (default), actually inserts the result into the document —
+             for html this returns the new embedded string, for hwpx/docx it
+             updates the source file in place. If False, only builds mre_xml
+             without touching the document.
     """
     if fmt is None:
         fmt = DocFormat.HTML if url is not None else detect_format(source)

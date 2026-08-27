@@ -131,13 +131,14 @@ def _parse_records(data: bytes) -> list[str]:
 
 
 def build_structure_tree_hwp(hwp_path: str | Path) -> list[dict]:
-    """Legacy HWP(OLE2) 문서에서 문단 노드 리스트를 문서 순서대로 추출한다.
+    """Extract a paragraph node list, in document order, from a legacy HWP (OLE2) document.
 
-    hwpx 와 마찬가지로 헤딩 개념이 없어 문단만 나온다
-    (mre.opc_adapter.build_structure_tree_hwpx 참조). 섹션 하나가 파싱 중 깨지면
-    그 섹션만 건너뛰고 나머지는 계속 진행한다 — 컨트롤 문자 파라미터 크기 표가 실제
-    파일의 특이 케이스(임베디드 개체 등)와 어긋났을 때 문서 전체 추출이 실패하는
-    것보다 부분 추출이 낫다는 판단.
+    Like hwpx, there's no heading concept, so only paragraphs come out (see
+    mre.opc_adapter.build_structure_tree_hwpx). If a section breaks mid-parse,
+    only that section is skipped and the rest continue — the judgment being
+    that a partial extraction is better than failing the whole document when
+    the control-character parameter size table diverges from a real file's
+    edge case (embedded objects, etc.).
 
     Returns
     -------
@@ -171,5 +172,5 @@ def build_structure_tree_hwp(hwp_path: str | Path) -> list[dict]:
 
 
 def parse_hwp(path: str | Path) -> list[dict]:
-    """path 를 파싱하고 LLM 전송용으로 정리된 노드 리스트를 반환(opc_adapter.parse_opc 대응)."""
+    """Parse path and return the node list cleaned up for the LLM (the counterpart to opc_adapter.parse_opc)."""
     return strip_to_text_nodes(build_structure_tree_hwp(path))

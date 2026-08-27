@@ -35,17 +35,19 @@ from mre.nodes import fetch_paragraph_by_id, strip_to_text_nodes
 
 @dataclass(frozen=True)
 class OPCAdapter:
-    """OPC zip 문서 하나에 대한 파싱/임베딩/fetch 로직 묶음.
+    """The bundle of parsing/embedding/fetch logic for a single OPC zip document.
 
-    extract : 문서 경로 -> heading/paragraph 노드 리스트
+    extract : document path -> list of heading/paragraph nodes
               ({"type": "heading", "level", "text"} | {"type": "paragraph", "id", "text"})
-    strip   : extract() 결과 -> LLM 전송용으로 정리된 노드 리스트
-    embed   : (문서 경로, 조립된 mre xml) -> None (zip root에 mre.xml을 in-place 삽입/교체)
-    exists  : 문서 경로 -> 이미 mre.xml이 삽입되어 있는지 여부
-    fetch   : (문서 경로, node id) -> 그 단락의 전체 텍스트. id="full"이면 문서 전체 텍스트를
-              이어붙여 반환. 못 찾으면 빈 문자열(예외 아님) — html_site_adapter.fetch_block()과
-              동일 계약. None이면 이 어댑터는 fetch를 지원하지 않음(fetch_opc()가
-              FetchNotSupportedError).
+    strip   : extract()'s result -> node list cleaned up for sending to the LLM
+    embed   : (document path, assembled mre xml) -> None (inserts/replaces
+              mre.xml at the zip root, in place)
+    exists  : document path -> whether mre.xml is already inserted
+    fetch   : (document path, node id) -> that paragraph's full text. If
+              id="full", returns the whole document's text concatenated. Returns
+              an empty string (not an exception) if not found — same contract
+              as html_site_adapter.fetch_block(). None means this adapter
+              doesn't support fetch (fetch_opc() raises FetchNotSupportedError).
     """
     name: str
     extract: Callable[[Path], list[dict]]
@@ -242,11 +244,12 @@ def _mre_xml_exists_in_zip(opc_path: Path) -> bool:
 
 
 def extract_mre_xml_opc(opc_path: str | Path) -> str | None:
-    """OPC zip(hwpx/docx) root의 mre.xml 엔트리 원문을 반환한다. 없으면 None.
+    """Return the raw content of the mre.xml entry at an OPC zip's (hwpx/docx) root. None if absent.
 
-    mre.reader.extract_mre_xml(html) 의 OPC 대응 — html 은 <script> 태그를 파싱해야
-    하지만 OPC 는 embed 가 애초에 mre.xml 을 별도 zip 엔트리로 넣으므로(insert_mre_into_zip)
-    포맷(hwpx/docx) 구분 없이 그대로 읽으면 된다."""
+    The OPC counterpart to mre.reader.extract_mre_xml(html) — html requires
+    parsing a <script> tag, but OPC's embed already puts mre.xml in as a
+    separate zip entry (insert_mre_into_zip), so it can just be read directly
+    regardless of format (hwpx/docx)."""
     try:
         with zipfile.ZipFile(opc_path, "r") as zf:
             return zf.read(_MRE_ENTRY_NAME).decode("utf-8")
@@ -313,20 +316,21 @@ def get_opc_adapter(fmt: DocFormat) -> OPCAdapter:
 
 
 def parse_opc(path: str | Path, fmt: DocFormat) -> list[dict]:
-    """path를 fmt 어댑터로 파싱하고 LLM 전송용으로 정리된 노드 리스트를 반환."""
+    """Parse path with fmt's adapter and return the node list cleaned up for the LLM."""
     adapter = get_opc_adapter(fmt)
     path = Path(path)
     return adapter.strip(adapter.extract(path))
 
 
 def embed_mre_opc(path: str | Path, mre_xml: str, fmt: DocFormat) -> None:
-    """path(hwpx/docx)의 zip root에 mre.xml을 in-place 삽입/교체."""
+    """Insert/replace mre.xml at the zip root of path (hwpx/docx), in place."""
     get_opc_adapter(fmt).embed(Path(path), mre_xml)
 
 
 def fetch_opc(path: str | Path, node_id: str, fmt: DocFormat) -> str:
-    """path(hwpx/docx)에서 node_id 단락의 전체 텍스트를 가져온다. id="full"이면 문서
-    전체 텍스트. 어댑터가 fetch를 지원하지 않으면 FetchNotSupportedError."""
+    """Fetch node_id's full paragraph text from path (hwpx/docx). If id="full",
+    returns the whole document's text. Raises FetchNotSupportedError if the
+    adapter doesn't support fetch."""
     adapter = get_opc_adapter(fmt)
     if adapter.fetch is None:
         raise FetchNotSupportedError(

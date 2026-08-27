@@ -27,7 +27,7 @@ class DocFormat(str, Enum):
 
 
 class FormatDetectionError(ValueError):
-    """source가 지원 포맷(html/pdf/hwp/hwpx/docx) 중 어느 것으로도 식별되지 않을 때."""
+    """Raised when source cannot be identified as any supported format (html/pdf/hwp/hwpx/docx)."""
 
 
 _PDF_MAGIC = b"%PDF-"
@@ -101,17 +101,18 @@ def _detect_zip_subtype(source: SourceLike) -> DocFormat:
 
 
 def detect_format(source: SourceLike) -> DocFormat:
-    """source(파일 경로 / bytes / seekable 파일 객체)의 문서 포맷을 매직 바이트로 감지한다.
+    """Detect source's document format from its magic bytes (file path / bytes / seekable file object).
 
     Parameters
     ----------
     source : str | Path | bytes | bytearray | BinaryIO
-        감지 대상. 파일 객체는 seek/tell을 지원해야 하며, 호출 후 원래 위치로 복원된다.
+        The target to detect. File objects must support seek/tell, and are
+        restored to their original position after the call.
 
     Raises
     ------
     FormatDetectionError
-        5개 지원 포맷 중 어느 시그니처와도 매칭되지 않을 때.
+        When none of the 5 supported formats' signatures match.
     """
     header = _read_header(source, _PEEK_SIZE)
 

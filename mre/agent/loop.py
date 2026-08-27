@@ -41,7 +41,7 @@ from mre.reader import extract_mre_xml
 
 
 class MRENotFoundError(Exception):
-    """문서 html에서 <mre> 헤더를 찾지 못했을 때."""
+    """Raised when no <mre> header is found in the document html."""
 
     def __init__(self, title: str):
         self.title = title
@@ -49,7 +49,7 @@ class MRENotFoundError(Exception):
 
 
 class BlockFetchError(Exception):
-    """문서를 찾을 수 없거나 요청한 pid 의 fetch 결과가 없을 때."""
+    """Raised when a document can't be found, or the requested pid has no fetch result."""
 
     def __init__(self, title: str, pid: str | None = None, reason: str = ""):
         self.title = title
@@ -63,16 +63,16 @@ class BlockFetchError(Exception):
 class AgentResult:
     answer: str
     retrieved_context: str
-    """fetch_blocks/fetch_doc 로 가져온 모든 블록의 합산 텍스트."""
+    """The concatenated text of every block fetched via fetch_blocks/fetch_doc."""
     num_turns: int
     success: bool
     error: str = ""
     action_log: list = field(default_factory=list)
-    """각 턴의 LLM 출력 기록. [{"turn": int, "action": str, "raw": str}, ...]"""
+    """The LLM output record for each turn. [{"turn": int, "action": str, "raw": str}, ...]"""
     messages: list = field(default_factory=list)
-    """에이전트 전체 대화 기록 (system/user/assistant 메시지 리스트)."""
+    """The agent's full conversation history (a list of system/user/assistant messages)."""
     stats: dict = field(default_factory=_new_stats)
-    """누적 토큰/호출 수 — mre.generate_mre() 의 stats 와 동일 형태(mre.llm_util._new_stats)."""
+    """Cumulative token/call counts — same shape as mre.generate_mre()'s stats (mre.llm_util._new_stats)."""
 
 
 def _normalize_title(title: str) -> str:
@@ -322,25 +322,28 @@ async def run_agent(
     model: str,
     max_turns: int = MAX_TURNS,
 ) -> AgentResult:
-    """Progressive 2단계 공개 방식(metadata-only → 지목한 문서만 전체 공개)으로 query 에 답한다.
+    """Answer query using the progressive two-stage disclosure approach (metadata-only -> full disclosure only for documents picked out).
 
     Parameters
     ----------
-    query : 사용자 질문.
-    docs  : title 별로 두 스키마 중 하나를 섞어서 쓸 수 있다 — 문서마다 원본 포맷이 달라도
-            같은 docs dict 안에 같이 넣으면 된다.
-              - html : {"html": <mre 가 임베드된 문서 HTML>, "url": <fetch_block() 이
-                사이트 어댑터를 고르는 데 쓰는 원본 URL>}. generate_mre(fmt=DocFormat.HTML,
-                ...) 결과의 embedded_html 을 그대로 넣으면 된다.
-              - hwpx/docx/pdf : {"path": <mre 가 임베드된 hwpx/docx/pdf 파일 경로>,
-                "fmt": DocFormat.HWPX, DocFormat.DOCX 또는 DocFormat.PDF}.
-                generate_mre(fmt=..., ...) 가 in-place 로 갱신한 embedded_path 를 그대로
-                넣으면 된다. fetch_block() 의 generator-fingerprint 불일치 감지는 이
-                경로엔 아직 없다.
-    client, model : mre.generate_mre() 와 동일한 관례 — OpenAI-호환 비동기 클라이언트와
-            모델 이름을 호출자가 직접 넘긴다. 라이브러리는 기본 모델/백엔드를 강제하지 않는다.
-    max_turns : 턴 한도. 기본 mre.agent.schema.MAX_TURNS(12) — expand+fetch 한 세트당
-            2턴 소모를 감안한 6-hop 예산.
+    query : the user's question.
+    docs  : per title, either of two schemas can be mixed — documents with
+            different source formats can all live in the same docs dict.
+              - html : {"html": <the document HTML with mre embedded>, "url":
+                <the original URL fetch_block() uses to pick a site adapter>}.
+                Pass generate_mre(fmt=DocFormat.HTML, ...)'s result's
+                embedded_html directly.
+              - hwpx/docx/pdf : {"path": <the hwpx/docx/pdf file path with mre
+                embedded>, "fmt": DocFormat.HWPX, DocFormat.DOCX, or
+                DocFormat.PDF}. Pass generate_mre(fmt=..., ...)'s in-place
+                updated embedded_path directly. fetch_block()'s
+                generator-fingerprint mismatch detection doesn't exist yet for
+                this path.
+    client, model : same convention as mre.generate_mre() — the caller passes
+            an OpenAI-compatible async client and model name directly. The
+            library doesn't enforce a default model/backend.
+    max_turns : the turn limit. Defaults to mre.agent.schema.MAX_TURNS (12) —
+            a 6-hop budget assuming 2 turns consumed per expand+fetch pair.
     """
     normalized_titles = [_normalize_title(t) for t in docs]
     docs = {_normalize_title(k): v for k, v in docs.items()}

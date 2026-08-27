@@ -16,9 +16,10 @@ _TREE_RE = re.compile(r"\s*<tree\b[^>]*>.*?</tree>", re.DOTALL)
 
 
 def metadata_view(mre_xml: str) -> str:
-    """<tree>(문단 맵)를 통째로 제거해 <metadata>(title+summary)만 남긴다.
+    """Strip out the entire <tree> (paragraph map), leaving only <metadata> (title+summary).
 
-    2단계 공개의 1단계 — 모든 후보 문서를 이 뷰로 먼저 저렴하게 보여주고, 에이전트가
-    특정 문서를 지목(expand_document)하면 그 문서만 원본 mre_xml(전체 <tree> 포함)을
-    그대로 보여준다."""
+    The first of the two disclosure stages — every candidate document is shown
+    cheaply through this view first, and once the agent picks out a specific
+    document (expand_document), only that document is shown as the original
+    mre_xml (full <tree> included)."""
     return _TREE_RE.sub("", mre_xml).strip()

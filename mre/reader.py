@@ -20,11 +20,12 @@ _RESOURCES_RE = re.compile(r"\s*<resources>.*?</resources>", re.DOTALL)
 
 
 def extract_mre_xml(html: str) -> str | None:
-    """embed된 html에서 <mre>...</mre> 원문을 반환한다. MRE가 없으면 None.
+    """Return the raw <mre>...</mre> content from embedded html. None if there's no MRE.
 
-    에이전트가 문서를 탐색하기 전에 헤더 전체(제목/요약/트리)를 먼저 읽어야 하는 모든
-    용도에 쓰인다 — 예: mre.agent 의 progressive 루프가 후보 문서들의 metadata-only 뷰를
-    만들기 전에, 또는 expand_document 로 지목된 문서의 전체 트리를 보여주기 전에."""
+    Used anywhere an agent needs to read the full header (title/summary/tree)
+    before navigating a document — e.g. before mre.agent's progressive loop
+    builds a metadata-only view of candidate documents, or before showing the
+    full tree of a document picked out by expand_document."""
     soup = BeautifulSoup(html, "html.parser")
     script = soup.find("script", {"type": "application/mre+xml"})
     if script is None:

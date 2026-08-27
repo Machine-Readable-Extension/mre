@@ -22,25 +22,31 @@ def build_progressive_action_schema(
     has_expanded: bool = False,
     has_retrieved: bool = False,
 ) -> dict:
-    """현재 상태(has_expanded/has_retrieved)에 맞는 schema 를 매 턴 새로 빌드해 넘긴다.
+    """Build and hand back the schema matching the current state (has_expanded/has_retrieved), freshly built each turn.
 
-    `expand_document`/`fetch_doc`는 항상 허용(둘 다 metadata 만 보고 내리는 판단 —
-    특정 문단이 필요하면 expand, 문서 전체가 필요하면 fetch_doc), `fetch_blocks`는 문서를
-    1개 이상 expand 한 뒤에만, `answer`는 무언가(블록 또는 전체 문서)를 1회 이상 retrieve
-    한 뒤에만 허용한다.
+    `expand_document`/`fetch_doc` are always allowed (both are judgment calls
+    made from metadata alone — expand when a specific paragraph is needed,
+    fetch_doc when the whole document is needed); `fetch_blocks` is only
+    allowed after at least one document has been expanded; `answer` is only
+    allowed after retrieving something (a block or a whole document) at least
+    once.
 
-    has_expanded  : 지금까지 expand_document 로 펼친 문서가 1개 이상 있는가
-                     — True 여야 fetch_blocks 브랜치가 열린다.
-    has_retrieved : 지금까지 fetch_blocks 또는 fetch_doc 로 실제 콘텐츠를 가져온 적이
-                     있는가 — True 여야 answer 브랜치가 열린다.
+    has_expanded  : whether at least one document has been expanded so far via
+                     expand_document — must be True for the fetch_blocks
+                     branch to open up.
+    has_retrieved : whether actual content has been fetched so far via
+                     fetch_blocks or fetch_doc — must be True for the answer
+                     branch to open up.
 
-    fetch_blocks 의 title 은 doc_titles 로 enum 제약(환각 title 차단)하지만, pid 는 enum
-    제약하지 않는다 — expand 되지 않은 문서·존재하지 않는 pid 를 요청하면 grammar 가 아니라
-    런타임(mre.fetch_block -> 빈 문자열/에러)에서 걸러진다. "expand 후 fetch" 순서는
-    프롬프트/워크플로 차원의 권고이지 grammar 강제가 아니다.
+    fetch_blocks's title is enum-constrained by doc_titles (blocking
+    hallucinated titles), but pid is not enum-constrained — requesting an
+    unexpanded document or a nonexistent pid is caught at runtime
+    (mre.fetch_block -> empty string/error), not by the grammar. The "expand
+    then fetch" ordering is a prompt/workflow-level recommendation, not a
+    grammar constraint.
 
-    doc_titles : 후보 문서 전체 제목 목록 — expand_document/fetch_doc.titles 와
-                 fetch_blocks.title 전부의 enum.
+    doc_titles : the full list of candidate document titles — the enum for
+                 both expand_document/fetch_doc.titles and fetch_blocks.title.
     """
     seen_t: set[str] = set()
     uniq_titles: list[str] = []

@@ -58,11 +58,11 @@ _TARGET_EXTENSIONS = {
 
 
 class LibreOfficeNotAvailableError(RuntimeError):
-    """soffice_bin이 PATH(또는 지정된 경로)에서 실행되지 않을 때."""
+    """Raised when soffice_bin can't be run from PATH (or the given path)."""
 
 
 class HwpConversionError(RuntimeError):
-    """soffice 변환 자체가 실패했을 때 (0이 아닌 종료 코드, 타임아웃, 출력 파일 없음 등)."""
+    """Raised when the soffice conversion itself fails (non-zero exit code, timeout, no output file, etc.)."""
 
 
 def convert_hwp(
@@ -73,26 +73,28 @@ def convert_hwp(
     soffice_bin: str = "soffice",
     timeout: float = 120.0,
 ) -> Path:
-    """path(.hwp)를 LibreOffice(+H2Orestart)로 target(DOCX 또는 PDF)으로 변환해
-    결과 파일 경로를 반환한다. Best-effort — 실제 손실 사례는 모듈 docstring 참조.
+    """Convert path (.hwp) to target (DOCX or PDF) via LibreOffice (+H2Orestart)
+    and return the resulting file's path. Best-effort — see the module
+    docstring for measured real-world content loss.
 
-    호출할 때마다 WARNING 레벨 로그를 남긴다 (핸들러 미설정 시에도 Python의 기본
-    lastResort 핸들러가 stderr에 출력하므로, 별도 logging 설정 없이도 눈에 띈다).
+    Logs at WARNING level on every call (even with no handler configured,
+    Python's default lastResort handler prints to stderr, so it's visible
+    without any logging setup).
 
     Parameters
     ----------
-    target  : DocFormat.DOCX(기본) 또는 DocFormat.PDF만 지원.
-    outdir  : 변환 결과를 쓸 디렉토리. 기본은 path와 같은 디렉토리.
-    soffice_bin : soffice 실행 파일. PATH에 없으면 절대경로로 넘긴다.
-    timeout : 변환 서브프로세스 대기 시간(초).
+    target  : only DocFormat.DOCX (default) or DocFormat.PDF are supported.
+    outdir  : directory to write the conversion result to. Defaults to the same directory as path.
+    soffice_bin : the soffice executable. Pass an absolute path if it's not on PATH.
+    timeout : how long to wait for the conversion subprocess, in seconds.
 
     Raises
     ------
-    ValueError : target이 DOCX/PDF가 아닐 때.
-    FileNotFoundError : path가 존재하지 않을 때.
-    LibreOfficeNotAvailableError : soffice_bin을 실행할 수 없을 때.
-    HwpConversionError : 변환 서브프로세스가 실패했거나(0이 아닌 종료 코드),
-        시간 초과했거나, 결과 파일이 생성되지 않았을 때.
+    ValueError : if target is not DOCX/PDF.
+    FileNotFoundError : if path does not exist.
+    LibreOfficeNotAvailableError : if soffice_bin cannot be run.
+    HwpConversionError : if the conversion subprocess failed (non-zero exit
+        code), timed out, or produced no output file.
     """
     if target not in _TARGET_EXTENSIONS:
         raise ValueError(f"target은 DocFormat.DOCX 또는 DocFormat.PDF만 지원합니다: {target!r}")
