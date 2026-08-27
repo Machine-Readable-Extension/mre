@@ -33,7 +33,7 @@ plugins:
         python:
           options:
             show_source: true
-            docstring_style: google
+            docstring_style: numpy
 
 markdown_extensions:
   - admonition
