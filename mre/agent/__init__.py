@@ -1,17 +1,21 @@
 """
-mre.agent — MRE 기반 agentic RAG 루프, 옵트인 서브패키지.
+mre.agent - an opt-in subpackage for an MRE-based agentic RAG loop.
 
-`mre` 코어 패키지는 문서 표준(생성 + fetch)만 다루는 게 의도적인 경계다 —
-"에이전트의 턴별 추론 루프는 이 패키지의 관심사가 아니다"(mre/README.md). 이 서브패키지는
-그 경계 바깥, 실제로 MRE 헤더를 읽고 도구를 호출하며 답을 도출하는 루프를 원하는 사용자를
-위한 것 — 코어를 건드리지 않고 독립적으로 버저닝/실험한다.
+The `mre` core package deliberately limits itself to the document standard
+(generation and fetch): "the agent's turn-by-turn reasoning loop is not this
+package's concern" (mre/README.md). This subpackage lives outside that
+boundary for users who want an actual loop that reads MRE headers, calls
+tools, and produces an answer. It is versioned and experimented on
+independently of the core.
 
-지금은 progressive(metadata-only 2단계 공개) 방식 하나만 구현한다. 두 가지 방식으로
-쓸 수 있다:
-  1. run_agent() 하나로 바로 — 완성형 진입점.
-  2. 개별 조각(build_progressive_action_schema/metadata_view/SYSTEM_PROMPT 등)을 가져다
-     직접 다른 루프(LangChain 등)에 도구로 꽂아 쓰기 — mre 코어가 generate_mre() 와
-     HTMLSiteAdapter/fetch_block/build_mre_xml 을 둘 다 공개하는 것과 동일한 패턴.
+Only one strategy is implemented so far: progressive, two-stage
+(metadata-only) disclosure. It can be used two ways:
+  1. Call run_agent() directly as a ready-made entry point.
+  2. Import the individual pieces (build_progressive_action_schema,
+     metadata_view, SYSTEM_PROMPT, etc.) and wire them into a different loop
+     (e.g. LangChain) as tools, the same pattern the mre core uses by
+     exposing both generate_mre() and the lower-level
+     HTMLSiteAdapter/fetch_block/build_mre_xml.
 """
 
 from mre.agent.loop import AgentResult, BlockFetchError, MRENotFoundError, run_agent

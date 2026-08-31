@@ -1,20 +1,25 @@
 from __future__ import annotations
 
 """
-Progressive 루프의 프롬프트 — 인자 없이 바로 쓸 수 있는 완성된 상수 하나(SYSTEM_PROMPT)와,
-질문을 채워 넣어 재사용하는 작은 템플릿 하나(ANSWER_FORMAT).
+Prompts for the progressive loop: one ready-to-use constant with no
+arguments needed (SYSTEM_PROMPT), and one small template reused by filling
+in the question (ANSWER_FORMAT).
 
-core/mre.py 의 _MRE_BASE_PROGRESSIVE + PROGRESSIVE_SA_FORMAT/_LA_ANSWER_FORMAT 을 이
-라이브러리 배포 경계 안으로 옮겨왔다. 원본은 데이터셋이 short-answer(EM 채점) 벤치마크인지
-long-form 벤치마크인지에 따라 "가장 짧은 정답만 출력" vs "완전한 문장으로 서술" 둘 중
-하나를 강제하는 두 갈래 ANSWER FORMAT 을 썼다 — 일반 사용자는 EM 채점 대상이 아니라 이
-구분 자체가 안 맞는다. 그래서 answer_format 같은 분기 파라미터 없이, 질문에 맞는 길이로
-답하라는 중립적인 문구 하나로 통일했다(길이는 모델이 질문을 보고 판단).
+Ported from core/mre.py's _MRE_BASE_PROGRESSIVE +
+PROGRESSIVE_SA_FORMAT/_LA_ANSWER_FORMAT into this library's distribution
+boundary. The original used two different ANSWER FORMAT branches depending
+on whether the dataset was a short-answer (EM-scored) or long-form
+benchmark, forcing either "output only the shortest possible answer" or
+"write out full sentences." That distinction doesn't apply to a general
+user, who isn't being EM-scored. So instead of a branching parameter like
+answer_format, this is unified into one neutral instruction to answer at a
+length that fits the question, letting the model judge the length itself.
 """
 
 import textwrap
 
-# 도구 설명 + 워크플로 — 질문에 의존하지 않는 정적 텍스트라 SYSTEM_PROMPT 그대로 노출된다.
+# Tool descriptions plus workflow: static text that doesn't depend on the
+# question, so SYSTEM_PROMPT is exposed as is.
 SYSTEM_PROMPT = textwrap.dedent("""
 You are an autonomous research agent specialized in precise information extraction from structured web documents. Your primary objective is to accurately answer user queries by navigating pre-loaded document structures.
 
@@ -96,9 +101,11 @@ Step 4: Execute the `answer` tool to output your final response.
 
 CRITICAL RULE: You MUST retrieve actual document content — via `fetch_blocks` (after `expand_document`) or via `fetch_doc` — at least once before calling `answer`. Never answer based on MRE metadata alone.""").strip()
 
-# 질문(query)을 채워 넣어 재사용하는 작은 템플릿 — 최초 user 메시지, 그리고 매 fetch 응답
-# 직후 재노출 둘 다에 동일하게 쓰인다("질문을 매 턴 다시 보여주면 멀티홉 조기 답변이
-# 줄어든다"는 관찰을 일반화한 것 — core/mre.py PROGRESSIVE_SA_FORMAT 참조).
+# A small template reused by filling in the question (query): used the same
+# way both in the initial user message and when re-shown right after every
+# fetch response. Generalizes the observation that re-showing the question
+# every turn reduces premature multi-hop answers (see core/mre.py's
+# PROGRESSIVE_SA_FORMAT).
 ANSWER_FORMAT = textwrap.dedent("""
 ── ANSWER FORMAT ─────────────────────────────────────────────────────
 Answer the question using only the information in the retrieved

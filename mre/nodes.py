@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 """
-포맷 무관 node 정규화 — html/hwpx/docx/pdf 어댑터가 공통으로 쓰는 조각들.
+Format-agnostic node normalization: pieces shared by the html/hwpx/docx/pdf adapters.
 
-data_utils/mre_generator.py(v1)의 동명 함수를 이 라이브러리 배포 경계 안으로 옮겨왔다.
+Ported from the same-named functions in data_utils/mre_generator.py (v1)
+into this library's distribution boundary.
 """
 
 import re
@@ -13,7 +14,7 @@ _PID_RE = re.compile(r"^[A-Za-z]*(\d+)$")
 
 def strip_to_text_nodes(nodes: list[dict]) -> list[dict]:
     """
-    LLM 전송용: heading과 paragraph 노드를 순서 유지하며 추출합니다.
+    Extract heading and paragraph nodes, in order, for sending to the LLM.
     - heading: type, level, text
     - paragraph: type, id, text
     """
@@ -28,14 +29,18 @@ def strip_to_text_nodes(nodes: list[dict]) -> list[dict]:
 
 
 def fetch_paragraph_by_id(nodes: list[dict], node_id: str) -> str:
-    """extract()가 만든 노드 리스트에서 node_id 단락의 전체 텍스트를 가져온다.
-    id="full"이면 문서 전체 텍스트(문단 구분은 빈 줄). 못 찾으면 빈 문자열(예외 아님) —
-    html_site_adapter.fetch_block()과 동일 계약.
+    """Fetch the full text of the node_id paragraph from the node list produced by extract().
 
-    hwpx/docx(mre.opc_adapter)와 pdf(mre.pdf_adapter)가 공유하는 조각 — 두 포맷 모두
-    "path 기반 문서 -> extract()를 다시 불러 인덱싱" 방식으로 fetch를 구현하므로
-    (생성 시점과 fetch 시점이 완전히 같은 함수를 쓰는 single-truth 원칙, mre.appendix
-    모듈 docstring 참조) id 파싱/조회 로직 자체는 포맷과 무관하다."""
+    id="full" returns the whole document's text, paragraphs separated by a
+    blank line. An id that isn't found returns an empty string rather than
+    raising, matching html_site_adapter.fetch_block()'s contract.
+
+    Shared by hwpx/docx (mre.opc_adapter) and pdf (mre.pdf_adapter): both
+    formats implement fetch as "re-run extract() on the path-based document,
+    then index into it" (the single-source-of-truth principle where
+    generation time and fetch time use the exact same function, see the
+    mre.appendix module docstring), so the id parsing/lookup logic itself is
+    format-agnostic."""
     para_nodes = [n for n in nodes if n.get("type") == "paragraph"]
     if node_id == "full":
         return "\n\n".join(n["text"] for n in para_nodes)

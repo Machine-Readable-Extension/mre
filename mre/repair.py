@@ -3,19 +3,24 @@ from __future__ import annotations
 """
 Misalignment detection & selective regeneration — paragraph granularity only.
 
-v2 parallel-array 출력의 두 가지 실패 모드를 사후 보정한다:
-  (1) count mismatch — LLM 이 문단 수보다 적은 headings/keywords 를 내보내 뒤쪽 문단이
-      빈 desc/keys 로 남는다 (긴 문서 꼬리 공백).
-  (2) keyword misalignment — keywords[i] 의 고유명사가 실제로 i번째 문단 본문에 없음
-      (인접 문단 엔티티가 위치 밀림으로 들어온 경우).
-두 경우에 해당하는 문단만 골라, 문단 id 를 명시적으로 anchor 한 채 (위치 기반이 아닌
-id 기반 응답) 재생성 요청한다 → 위치 밀림 재발 없이 해당 문단만 교체.
+Post-hoc correction for two failure modes of the v2 parallel-array output:
+  (1) count mismatch: the LLM emits fewer headings/keywords than there are
+      paragraphs, leaving trailing paragraphs with an empty desc/keys (a
+      tail gap on long documents).
+  (2) keyword misalignment: the proper nouns in keywords[i] don't actually
+      appear in the i-th paragraph's text (an adjacent paragraph's entities
+      bled in due to a positional shift).
+Only the paragraphs matching one of these are regenerated, with the
+paragraph id explicitly anchored in the request (an id-based response
+instead of a positional one), so the replacement can't drift again.
 
-data_utils/mre_generator3.py의 동명 섹션을 이 라이브러리 배포 경계 안으로 옮겨왔다.
-원본은 section-granularity(v3 --granularity section) 호출자와 이 함수를 공유하기 위해
-unit_filter/unit_label/regen_system_prompt/regen_schema 를 매개변수화했지만, 이 라이브러리는
-paragraph 전용이라 그 일반화는 걷어내고 paragraph 규칙(REGEN_SYSTEM_PROMPT/REGEN_JSON_SCHEMA/
-_paragraph_nodes)을 직접 사용한다.
+Ported from the same-named section of data_utils/mre_generator3.py into
+this library's distribution boundary. The original parameterized
+unit_filter/unit_label/regen_system_prompt/regen_schema so this function
+could be shared with the section-granularity (v3 --granularity section)
+caller; since this library is paragraph-only, that generalization is
+stripped out and the paragraph rules (REGEN_SYSTEM_PROMPT/REGEN_JSON_SCHEMA/
+_paragraph_nodes) are used directly.
 """
 
 import logging
@@ -39,9 +44,9 @@ from mre.llm_util import (
 
 log = logging.getLogger(__name__)
 
-_MISALIGN_MIN_GROUNDED_RATIO = 0.5   # 문단 keywords 중 본문에 grounding 돼야 하는 최소 비율
-_MISALIGN_FUZZ_THRESHOLD     = 88    # substring 실패 시 thefuzz partial_ratio fuzzy fallback 임계
-_MISALIGN_MAX_RETRIES        = 2     # 재생성 라운드 수 상한
+_MISALIGN_MIN_GROUNDED_RATIO = 0.5   # minimum fraction of a paragraph's keywords that must ground in its text
+_MISALIGN_FUZZ_THRESHOLD     = 88    # thefuzz partial_ratio threshold for the fuzzy fallback when substring match fails
+_MISALIGN_MAX_RETRIES        = 2     # upper bound on regeneration rounds
 
 
 def _norm_for_grounding(text: str) -> str:
@@ -53,18 +58,20 @@ def _split_keyword_phrases(keywords: str) -> list[str]:
 
 
 def _phrase_grounded(phrase: str, para_norm: str, *, fuzz_threshold: int) -> bool:
-    """keyword phrase 가 문단 본문에 실제로 등장하는지 검사.
+    """Check whether a keyword phrase actually appears in the paragraph text.
 
-    1) 정규화 substring — 대부분의 고유명사 정확 매칭.
-    2) 실패 시 thefuzz partial_ratio fuzzy fallback — 소유격/관사 접두어("The ", "'s")
-       같은 사소한 표기 변형을 흡수. 너무 짧은 토큰의 fuzzy 오탐은 길이 하한으로 차단.
+    1) Normalized substring match: catches most proper nouns exactly.
+    2) On failure, fall back to thefuzz's partial_ratio fuzzy match, which
+       absorbs minor variations like a possessive or leading article
+       ("The ", "'s"). A length floor blocks fuzzy false positives on
+       tokens that are too short.
     """
     p = _norm_for_grounding(phrase)
     if not p:
         return False
     if p in para_norm:
         return True
-    if len(p) < 4:  # 짧은 약어(IWW 등)는 fuzzy 오탐 위험 → substring 실패 시 미grounding 처리
+    if len(p) < 4:  # short abbreviations (e.g. IWW) risk fuzzy false positives, so treat as ungrounded on substring miss
         return False
     try:
         from thefuzz import fuzz
@@ -74,7 +81,7 @@ def _phrase_grounded(phrase: str, para_norm: str, *, fuzz_threshold: int) -> boo
 
 
 def _keywords_grounded_ratio(keywords: str, para_text: str, *, fuzz_threshold: int) -> tuple[int, int]:
-    """(grounding 된 phrase 수, 전체 phrase 수)."""
+    """Return (number of grounded phrases, total phrase count)."""
     phrases = _split_keyword_phrases(keywords)
     if not phrases:
         return 0, 0
@@ -84,8 +91,8 @@ def _keywords_grounded_ratio(keywords: str, para_text: str, *, fuzz_threshold: i
 
 
 def _paragraph_nodes(nodes: list[dict]) -> list[dict]:
-    """heading 을 제외한 문단 노드만 입력 순서대로 반환.
-    i번째 문단이 headings[i]/keywords[i] 에 대응한다 (build_mre_xml의 para_idx 매핑과 동일)."""
+    """Return only paragraph nodes (headings excluded), in input order.
+    The i-th paragraph corresponds to headings[i]/keywords[i], same mapping as build_mre_xml's para_idx."""
     return [n for n in nodes if n.get("type", "paragraph") != "heading"]
 
 
@@ -97,17 +104,22 @@ def _find_misaligned_indices(
     fuzz_threshold: int,
     include_misaligned: bool = False,
 ) -> list[tuple[int, str]]:
-    """재생성이 필요한 (문단 index, 사유) 목록. (keywords 기준만 — heading 은 내용 검증 안 함.)
+    """List of (paragraph index, reason) pairs that need regeneration. Checked against keywords only; heading content is not validated.
 
-    - "missing"    : keywords 배열이 문단보다 짧거나 해당 항목이 빈 문자열
-                      (count mismatch → 꼬리 공백 포함. headings/keywords 는 같은 응답에서
-                       함께 잘리므로 keywords 공백 검사만으로 tail truncation 이 잡힌다.)
-    - "misaligned" : keywords 의 grounding 비율이 min_ratio 미만
-                      (본문에 없는 엔티티 = 위치 밀림/환각). include_misaligned=False (기본)
-                      에서는 이 사유는 재생성 대상에 넣지 않는다 — 문단 본문에 없는
-                      "이웃 문단/문서 topic" 엔티티가 cross-paragraph 검색 신호로 유용한
-                      경우가 많아, 리터럴 grounding 강제가 오히려 retrieval precision 을
-                      떨어뜨리는 회귀가 확인됐다.
+    - "missing"    : the keywords array is shorter than the paragraph count,
+                      or the entry is an empty string (a count mismatch,
+                      including a tail gap: headings/keywords get truncated
+                      together in the same response, so checking keywords
+                      for emptiness alone catches tail truncation).
+    - "misaligned" : the keywords' grounding ratio is below min_ratio (an
+                      entity absent from the paragraph text implies a
+                      positional shift or hallucination). With
+                      include_misaligned=False (the default), this reason is
+                      not sent to regeneration: entities that aren't in the
+                      paragraph's own text but come from a neighboring
+                      paragraph or the document's topic are often a useful
+                      cross-paragraph retrieval signal, and forcing literal
+                      grounding was found to regress retrieval precision.
     """
     bad: list[tuple[int, str]] = []
     for i, para in enumerate(paragraphs):
@@ -199,7 +211,7 @@ async def _call_regen_async(
     guided: bool = False,
     model_ctx: int = MODEL_CTX,
 ) -> tuple[dict, dict]:
-    """오정렬/누락 문단 하위집합에 대해 id-anchored 재생성 1회 호출."""
+    """One id-anchored regeneration call for the subset of misaligned/missing paragraphs."""
     user_prompt = _build_regen_user_prompt(title, para_nodes)
     messages = [
         {"role": "system", "content": REGEN_SYSTEM_PROMPT},
@@ -236,21 +248,25 @@ async def repair_misaligned_alignment_async(
     fuzz_threshold: int = _MISALIGN_FUZZ_THRESHOLD,
     include_misaligned: bool = False,
 ) -> tuple[dict, dict, dict]:
-    """생성된 headings/keywords 에서 누락/오정렬 문단을 찾아 그 문단만 재생성한다.
+    """Find missing/misaligned paragraphs in the generated headings/keywords and regenerate only those.
 
-    - headings/keywords 배열을 문단 수에 맞춰 pad/truncate → count mismatch 를 index 로 정규화.
-    - 오정렬/누락 문단만 batch 로 묶어 id-anchored 재생성, 응답 id 로 제자리에 patch.
-    - 라운드마다 재검증하며 개선이 없거나 max_retries 도달 시 종료.
-    - 사유("missing"/"misaligned")별로 두 가지 카운트를 별도로 누계한다:
-        * paragraphs — 재생성 대상으로 걸린 문단 수 (같은 문단이 여러 라운드에 걸쳐
-          계속 걸리면 그만큼 여러 번 카운트).
-        * llm_calls  — 그 사유의 문단을 포함해 실제로 나간 "LLM 호출(청크)" 수. 한 청크에
-          missing/misaligned 문단이 섞여 있으면 두 사유 모두에 +1.
+    - Pads/truncates the headings/keywords arrays to the paragraph count,
+      normalizing a count mismatch into plain indices.
+    - Batches only the misaligned/missing paragraphs into an id-anchored
+      regeneration call, then patches the response back in by id.
+    - Re-validates each round, stopping once there's no improvement or
+      max_retries is reached.
+    - Tracks two separate counts per reason ("missing"/"misaligned"):
+        * paragraphs: how many paragraphs were flagged for regeneration
+          (a paragraph flagged again across multiple rounds is counted each time).
+        * llm_calls: how many actual LLM calls (chunks) included a paragraph
+          for that reason. A chunk mixing missing and misaligned paragraphs
+          increments both.
 
     Returns
     -------
-    (보정된 llm_data 사본, 재생성 호출 누계 stats,
-     사유별 카운트 {"missing": {"paragraphs": N, "llm_calls": N}, "misaligned": {...}})
+    (a corrected copy of llm_data, cumulative regeneration-call stats,
+     per-reason counts: {"missing": {"paragraphs": N, "llm_calls": N}, "misaligned": {...}})
     """
     stats = _new_stats()
     regen_counts = {
@@ -264,7 +280,8 @@ async def repair_misaligned_alignment_async(
 
     headings = list(llm_data.get("headings", []))
     keywords = list(llm_data.get("keywords", []))
-    # 배열을 단위 수에 정렬 — 부족분은 빈 문자열 pad(꼬리 누락), 초과분은 절단(위치 밀림/중복).
+    # Align the arrays to the unit count: pad shortfalls with empty strings
+    # (a tail gap), truncate excess (a positional shift or duplicate).
     headings = (headings + [""] * n_para)[:n_para]
     keywords = (keywords + [""] * n_para)[:n_para]
 
@@ -282,21 +299,22 @@ async def repair_misaligned_alignment_async(
             regen_counts[reason]["paragraphs"] += 1
         bad = [i for i, _ in bad_pairs]
         reason_by_id = {paragraphs[i]["id"]: reason for i, reason in bad_pairs}
-        log.info("  [misalign] %s: %d/%d 문단 재생성 (round %d/%d)",
+        log.info("  [misalign] %s: regenerating %d/%d paragraphs (round %d/%d)",
                  title[:40], len(bad), n_para, attempt, max_retries)
 
         bad_nodes = [dict(paragraphs[i]) for i in bad]
         try:
             chunks = _chunk_p_nodes_by_token_budget(bad_nodes, title, model_ctx)
         except _InputTooLarge:
-            # 단일 문단이 통째로 컨텍스트 초과 시 문단별 개별 처리로 fallback.
+            # Fall back to handling paragraphs one at a time if a single
+            # paragraph alone exceeds the context.
             chunks = [[bn] for bn in bad_nodes]
 
         changed = False
         for chunk in chunks:
             if not chunk:
                 continue
-            # 이 청크(=LLM call 1회)에 섞여 있는 사유들 전부에 call 카운트 +1.
+            # Every reason mixed into this chunk (= one LLM call) gets its call count incremented.
             reasons_in_chunk = {reason_by_id[n["id"]] for n in chunk if n["id"] in reason_by_id}
             for reason in reasons_in_chunk:
                 regen_counts[reason]["llm_calls"] += 1
@@ -304,8 +322,8 @@ async def repair_misaligned_alignment_async(
                 res, st = await _call_regen_async(
                     client, title, chunk, model=model, guided=guided, model_ctx=model_ctx,
                 )
-            except Exception as e:  # noqa: BLE001 — 재생성 실패는 원본 유지로 degrade
-                log.warning("  [misalign] regen 호출 실패 [%s]: %s", title[:40], e)
+            except Exception as e:  # noqa: BLE001 — degrade to keeping the original on a regen failure
+                log.warning("  [misalign] regen call failed [%s]: %s", title[:40], e)
                 continue
             _merge_stats(stats, st)
             for item in (res.get("nodes") or []):
@@ -323,7 +341,7 @@ async def repair_misaligned_alignment_async(
                 if headings[idx] != old_h or keywords[idx] != old_k:
                     changed = True
         if not changed:
-            # 이번 라운드에 실제 변경이 없으면 (LLM 이 같은 결과 반환) 무한 반복 방지 위해 종료.
+            # No actual change this round (the LLM returned the same result), so stop to avoid looping forever.
             break
 
     new_data = dict(llm_data)

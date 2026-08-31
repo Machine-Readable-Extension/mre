@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 """
-Progressive 루프의 4-action(expand_document/fetch_doc/fetch_blocks/answer, 그리고
-answer 가로채기 직후 한 턴만 쓰이는 check_sufficiency) guided-decoding JSON schema.
+The guided-decoding JSON schema for the progressive loop's four actions
+(expand_document/fetch_doc/fetch_blocks/answer), plus check_sufficiency,
+which is injected for exactly one turn right after answer is intercepted.
 
-core/mre.py 의 build_progressive_action_schema/build_action_schema(check_sufficiency_only=True)
-를 이 라이브러리 배포 경계 안으로 옮겨왔다. sa_mode(answer.content 에 maxLength=150 을 거는
-short-answer 전용 분기)는 뺐다 — EM 채점 벤치마크 전용 개념이라 일반 라이브러리에는 안
-맞는다(mre.agent.prompts 참조: 답변 형식도 SA/LA 구분 없이 중립 문구 하나로 통일했다).
+Ported from core/mre.py's
+build_progressive_action_schema/build_action_schema(check_sufficiency_only=True)
+into this library's distribution boundary. sa_mode (a short-answer-only
+branch that caps answer.content at maxLength=150) was dropped: it's an
+EM-scoring-benchmark-specific concept that doesn't fit a general library
+(see mre.agent.prompts, where the answer format was also unified into one
+neutral phrasing with no SA/LA distinction).
 """
 
-MAX_TURNS         = 12   # expand+fetch 가 한 세트라 hop 당 2턴 소모 — 6-hop 예산
+MAX_TURNS         = 12   # expand+fetch form one set, so each hop costs 2 turns: a 6-hop budget
 MAX_DOCS_PER_TURN = 3
 MAX_PIDS_PER_DOC  = 5
 MAX_PID_LEN       = 20
@@ -119,10 +123,11 @@ def build_progressive_action_schema(
     return {"oneOf": branches}
 
 
-# answer 가로채기 직후 한 턴만 주입되는 고정 schema — 상태에 따라 달라지지 않으므로
-# build_progressive_action_schema 와 달리 매 턴 새로 빌드할 필요가 없다. missing 은
-# is_sufficient=true 일 때도 필드 자체는 필요(빈 문자열 허용) — 조건부 required 분기를
-# 피하려 하나의 flat schema 로 유지한다.
+# A fixed schema injected for exactly one turn right after answer is
+# intercepted. Unlike build_progressive_action_schema, it doesn't depend on
+# state, so there's no need to rebuild it every turn. missing is still a
+# required field even when is_sufficient=true (an empty string is
+# allowed); kept as one flat schema to avoid a conditional-required branch.
 CHECK_SUFFICIENCY_SCHEMA: dict = {
     "type": "object",
     "properties": {

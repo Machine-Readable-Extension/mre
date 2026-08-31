@@ -38,8 +38,9 @@ def _make_docs(david_lightfoot_html: str) -> tuple[dict, list[str]]:
 
 
 def _make_opc_docs(path: Path, fmt: DocFormat, title: str) -> tuple[dict, list[str]]:
-    """hwpx/docx 대응 _make_docs() — embed_mre_opc()로 path 를 in-place 갱신하고,
-    run_agent() 의 opc 문서 스키마({"path", "fmt"})로 docs dict 를 만든다."""
+    """The hwpx/docx counterpart to _make_docs(): updates path in place via
+    embed_mre_opc(), then builds a docs dict using run_agent()'s opc
+    document schema ({"path", "fmt"})."""
     stripped = parse_opc(path, fmt)
     para_nodes = [n for n in stripped if n["type"] == "paragraph"]
     mre_xml = build_mre_xml(
@@ -55,8 +56,9 @@ def _make_opc_docs(path: Path, fmt: DocFormat, title: str) -> tuple[dict, list[s
 
 
 def _make_pdf_docs(path: Path, title: str) -> tuple[dict, list[str]]:
-    """hwpx/docx 대응 _make_opc_docs() 의 pdf 버전 -- embed_mre_pdf()로 path 를
-    in-place 갱신하고, run_agent() 의 path 기반 스키마({"path", "fmt"})로 만든다."""
+    """The pdf version of _make_opc_docs() (the hwpx/docx counterpart):
+    updates path in place via embed_mre_pdf(), then builds it using
+    run_agent()'s path-based schema ({"path", "fmt"})."""
     stripped = parse_pdf(path)
     para_nodes = [n for n in stripped if n["type"] == "paragraph"]
     mre_xml = build_mre_xml(
@@ -268,7 +270,7 @@ async def test_hwpx_doc_fetch_doc_shortcut(sample_hwpx):
 
 @pytest.mark.asyncio
 async def test_mixed_html_and_docx_docs_in_one_run(david_lightfoot_html, sample_docx):
-    """docs dict 는 title 별로 html/opc 스키마를 자유롭게 섞을 수 있어야 한다."""
+    """The docs dict must be able to freely mix html/opc schemas per title."""
     html_docs, _ = _make_docs(david_lightfoot_html)
     docx_docs, docx_pids = _make_opc_docs(sample_docx, DocFormat.DOCX, _DOCX_TITLE)
     docs = {**html_docs, **docx_docs}
@@ -295,7 +297,7 @@ async def test_opc_mre_not_found_raises(sample_docx):
 
 
 # ─────────────────────────────────────────────
-# pdf docs (path 기반 스키마는 hwpx/docx 와 동일하게 {"path", "fmt"}, fmt=DocFormat.PDF)
+# pdf docs (the path-based schema is the same as hwpx/docx: {"path", "fmt"}, fmt=DocFormat.PDF)
 # ─────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -332,7 +334,7 @@ async def test_pdf_doc_fetch_doc_shortcut(sample_prose_pdf):
 
 @pytest.mark.asyncio
 async def test_mixed_html_and_pdf_docs_in_one_run(david_lightfoot_html, sample_prose_pdf):
-    """docs dict 는 title 별로 html/path 기반(opc, pdf) 스키마를 자유롭게 섞을 수 있어야 한다."""
+    """The docs dict must be able to freely mix html/path-based (opc, pdf) schemas per title."""
     html_docs, _ = _make_docs(david_lightfoot_html)
     pdf_docs, pdf_pids = _make_pdf_docs(sample_prose_pdf, _PDF_TITLE)
     docs = {**html_docs, **pdf_docs}

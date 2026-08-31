@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 """
-HTML MRE 생성 — 사이트(도메인)별 파싱 로직 dispatch.
+HTML MRE generation: dispatch to per-site (per-domain) parsing logic.
 
-웹페이지는 사이트마다 body 구조가 다르다 (Wikipedia의 mw-heading div 구조가
-대표적). 도메인별로 파싱 어댑터를 등록해두고, 문서의 출처 URL의 netloc으로
-맞는 어댑터를 골라 쓴다. Wikipedia 어댑터의 실체(_wiki_build_structure_tree 등,
-아래 참조)는 원래 data_utils/mre_generator.py(v1)에 있던 Wikipedia 전용 파싱
-로직을 이 라이브러리 배포 경계 안으로 이식한 것이다.
+A web page's body structure differs by site (Wikipedia's mw-heading div
+structure is a good example). A parsing adapter is registered per domain,
+and the one matching a document's source URL netloc gets picked. The
+Wikipedia adapter's implementation (_wiki_build_structure_tree, etc., see
+below) is the Wikipedia-specific parsing logic originally in
+data_utils/mre_generator.py (v1), ported into this library's distribution
+boundary.
 
-사이트 소유자가 자기 어댑터를 별도 패키지로 배포할 수 있도록, entry points
-("mre.site_adapters" 그룹)로 설치된 어댑터를 임포트 시점에 자동 발견한다 —
-아래 "플러그인 자동 발견" 절 참조.
+So a site owner can distribute their own adapter as a separate package,
+adapters installed via entry points (the "mre.site_adapters" group) are
+auto-discovered at import time. See the "plugin auto-discovery" section below.
 """
 
 import hashlib
@@ -131,7 +133,7 @@ class UnknownSiteError(LookupError):
     """Raised when no HTMLSiteAdapter is registered for the URL's domain and no fallback was given."""
 
 
-# name -> adapter (domains 는 adapter.domains 에 있음)
+# name -> adapter (domains live on adapter.domains)
 _REGISTRY: dict[str, HTMLSiteAdapter] = {}
 
 
@@ -142,14 +144,14 @@ def register_site(adapter: HTMLSiteAdapter) -> None:
     _register_builtin_sites(), so a plugin using the same name wins over the
     builtin one)."""
     if not adapter.domains:
-        raise ValueError(f"adapter.domains 가 비어있음: {adapter.name!r}")
+        raise ValueError(f"adapter.domains is empty: {adapter.name!r}")
     if adapter.name in _REGISTRY:
-        log.info("사이트 어댑터 %r 재등록(덮어씀)", adapter.name)
+        log.info("Re-registering site adapter %r (overwriting)", adapter.name)
     _REGISTRY[adapter.name] = adapter
 
 
 def _domain_matches(netloc: str, domain: str) -> bool:
-    netloc = netloc.lower().split(":")[0]  # 포트 제거
+    netloc = netloc.lower().split(":")[0]  # strip the port
     return netloc == domain or netloc.endswith("." + domain)
 
 
@@ -177,7 +179,7 @@ def get_site_adapter(url: str, *, fallback: HTMLSiteAdapter | None = None) -> HT
         return _REGISTRY[name]
     if fallback is not None:
         return fallback
-    raise UnknownSiteError(f"등록된 사이트 어댑터 없음 (도메인 미매칭): {url!r}")
+    raise UnknownSiteError(f"No registered site adapter matches this domain: {url!r}")
 
 
 def registered_sites() -> dict[str, tuple[str, ...]]:
@@ -221,9 +223,10 @@ _XML_ATTR_RE = re.compile(r'([\w-]+)\s*=\s*"([^"]*)"')
 
 
 def _extract_mre_root_attrs(html: str) -> dict[str, str]:
-    """html에 embed된 <script type="application/mre+xml"> 안 <mre ...> 루트 태그의
-    속성을 뽑는다. 문서 전체를 XML 로 파싱하지 않고 <mre ...> 여는 태그만 정규식으로
-    본다 — MREParser.extract_mre 가 이미 하는 것과 동일한 가벼운 접근."""
+    """Extract attributes from the <mre ...> root tag inside html's embedded
+    <script type="application/mre+xml">. Doesn't parse the whole document as
+    XML: just regex-matches the <mre ...> opening tag, the same lightweight
+    approach MREParser.extract_mre already uses."""
     m = _MRE_ROOT_TAG_RE.search(html)
     if not m:
         return {}
@@ -235,16 +238,17 @@ def _check_generator_fingerprint(adapter: HTMLSiteAdapter, html: str, *, strict:
     embedded_name = attrs.get("generator")
     embedded_fp = attrs.get("generator-fingerprint")
     if embedded_name is None or embedded_fp is None:
-        return  # 이 기능 도입 전에 생성된 문서 등 — 비교 대상 없음, 통과
+        return  # e.g. a document generated before this feature existed: nothing to compare, pass
     if embedded_name != adapter.name:
-        return  # 이 어댑터가 만든 문서가 아님 — fingerprint 비교 대상 아님
+        return  # not a document this adapter produced, so there's nothing to compare fingerprints against
     current_fp = compute_adapter_fingerprint(adapter)
     if current_fp == embedded_fp:
         return
     msg = (
-        f"어댑터 {adapter.name!r} 의 파싱 로직이 이 문서가 생성된 시점 이후 바뀐 것 "
-        f"같습니다 (생성 시 fingerprint={embedded_fp!r}, 지금 설치된 어댑터="
-        f"{current_fp!r}). id-to-paragraph 매핑이 어긋났을 수 있습니다."
+        f"Adapter {adapter.name!r}'s parsing logic appears to have changed "
+        f"since this document was generated (fingerprint at generation time="
+        f"{embedded_fp!r}, currently installed adapter={current_fp!r}). The "
+        f"id-to-paragraph mapping may have drifted."
     )
     if strict:
         raise GeneratorFingerprintMismatch(msg)
@@ -271,22 +275,26 @@ def fetch_block(
     adapter = get_site_adapter(url, fallback=fallback)
     if adapter.fetch is None:
         raise FetchNotSupportedError(
-            f"사이트 어댑터 {adapter.name!r} 는 fetch 를 지원하지 않음(생성 전용)"
+            f"Site adapter {adapter.name!r} does not support fetch (generation-only)"
         )
     _check_generator_fingerprint(adapter, html, strict=strict)
     return adapter.fetch(html, node_id)
 
 
 # ─────────────────────────────────────────────
-# Wikipedia 어댑터 구현
+# Wikipedia adapter implementation
 # ─────────────────────────────────────────────
-# data_utils/mre_generator.py(v1)의 동명 함수를 이 라이브러리 배포 경계 안으로 옮겨왔다.
+# Ported from the same-named functions in data_utils/mre_generator.py (v1)
+# into this library's distribution boundary.
 
 _WIKI_NODE_TEXT_LIMIT = 400
-# 부록성 섹션은 build_structure_tree 자체에서도 한 번 더 걸러진다 — appendix.py의
-# _strip_appendix_sections(preprocess 단계, extract 전에 soup에서 통째로 제거)와 이중 방어.
-# preprocess가 커버하지 못하는 호출 경로(예: build_structure_tree를 preprocess 없이 직접
-# 호출하는 경우)에서도 최소한의 필터가 남도록 원본 동작을 그대로 보존한다.
+# Appendix sections get filtered a second time here inside
+# build_structure_tree itself, as a backup to appendix.py's
+# _strip_appendix_sections (which removes them wholesale from the soup at
+# the preprocess stage, before extract runs). This preserves the original
+# behavior of leaving at least a minimal filter in place for call paths that
+# preprocess doesn't cover, e.g. calling build_structure_tree directly
+# without preprocess.
 _WIKI_APPENDIX_HEADINGS = {"References", "See also", "External links"}
 
 
@@ -299,9 +307,9 @@ def _wiki_extract_node_text(element: Tag, limit: int = _WIKI_NODE_TEXT_LIMIT) ->
 
 def _wiki_build_structure_tree(soup: BeautifulSoup) -> list[dict]:
     """
-    Wikipedia HTML에서 mw-heading 섹션 제목과 <p> 단락을 문서 순서대로 추출합니다.
+    Extract mw-heading section titles and <p> paragraphs from Wikipedia HTML, in document order.
 
-    반환: nodes — 각 항목은 두 가지 타입 중 하나
+    Returns: nodes, each item one of two types:
       - {"type": "heading", "level": int, "text": str}
       - {"type": "paragraph", "id": str, "text": str}
     """
@@ -319,7 +327,7 @@ def _wiki_build_structure_tree(soup: BeautifulSoup) -> list[dict]:
         if not isinstance(el, Tag):
             return
 
-        # div.mw-heading.mw-heading{k} → heading 노드
+        # div.mw-heading.mw-heading{k} -> a heading node
         if el.name == "div":
             raw_classes: str | list[str] = el.get("class") or []
             classes: list[str] = [raw_classes] if isinstance(raw_classes, str) else list(raw_classes)
@@ -331,23 +339,26 @@ def _wiki_build_structure_tree(soup: BeautifulSoup) -> list[dict]:
                     if h_tag:
                         htext = h_tag.get_text(strip=True)
                         if htext in _WIKI_APPENDIX_HEADINGS:
-                            return  # 부록성 섹션은 구조 트리에 포함하지 않음
+                            return  # appendix sections aren't included in the structure tree
                         nodes.append({
                             "type": "heading",
                             "level": level,
                             "text": htext,
                         })
-                    return  # mw-heading 내부는 재귀하지 않음
+                    return  # don't recurse into an mw-heading's contents
 
-        # <p>, <ul>, <ol> → paragraph 노드
-        # MediaWiki는 *(불릿) / #(넘버) 위키 문법을 <ul><li> / <ol><li>로 렌더링하므로
-        # 본문 단락처럼 취급하고, <li> 텍스트를 합쳐 본문으로 사용한다.
-        # 단, <ol class="references">(부록성 출처 목록)는 제외한다.
+        # <p>, <ul>, <ol> -> a paragraph node
+        # MediaWiki renders *(bullet) / #(number) wiki syntax as <ul><li> /
+        # <ol><li>, so these are treated like body paragraphs and their <li>
+        # text is joined into the paragraph text. <ol class="references">
+        # (the appendix-style source list) is excluded.
         #
-        # pid 카운팅 정책: 텍스트가 *비어있지 않을 때만* counter 증가 + node 추가.
-        # 이렇게 해야 MRE의 <node id="pN"> 가 p1, p2, p3, ... 연속한다 (LLM이 보이지 않는
-        # gap 안에 paragraph가 있을 거라고 환각하는 것을 방지). MREParser.fetch_blocks
-        # 의 indexing(core/mre.py)도 동일 규칙(비어있지 않은 paragraph만 카운팅).
+        # pid counting policy: only increment the counter and add a node
+        # when the text is *non-empty*. This keeps MRE's <node id="pN">
+        # sequence continuous as p1, p2, p3, ... (preventing the LLM from
+        # hallucinating a paragraph sitting in an invisible gap).
+        # MREParser.fetch_blocks's indexing (core/mre.py) follows the same
+        # rule: count only non-empty paragraphs.
         if el.name in ("p", "ul", "ol"):
             if el.name == "ol" and "references" in (el.get("class") or []):
                 return
@@ -360,9 +371,9 @@ def _wiki_build_structure_tree(soup: BeautifulSoup) -> list[dict]:
                     "id": pid,
                     "text": text,
                 })
-            return  # 내부는 재귀하지 않음
+            return  # don't recurse into a matched element's contents
 
-        # 그 외 요소는 자식을 재귀 탐색
+        # Recurse into the children of any other element
         for child in el.children:
             if isinstance(child, Tag):
                 process_element(child)
@@ -408,27 +419,32 @@ def _wiki_inject_mre_into_html(html: str, mre_xml: str) -> str:
 
 
 def _wiki_title_letter_prefix(title: str) -> str:
-    """문서 제목의 첫 알파벳(대문자)을 노드 id 접두어로 사용.
+    """Use the document title's first letter (uppercased) as the node id prefix.
 
-    cross-document id collision 완화용 — 후보 문서 여러 개의 헤더가 한 프롬프트에 같이
-    노출될 때 순수 숫자만 다른 "p3" 같은 id는 문서 간에 겹쳐서, 에이전트가 잘못된 문서의
-    pid를 요청하는 환각(hallucination)을 유발한다. 문서마다 고유한 접두어를 붙이면 최소한
-    "그 pid가 어느 문서 것인지"는 시각적으로 구분된다 (data_utils/mre_generator3.py의
-    동명 함수와 동일 스킴 — 정확한 재현을 위해 규칙을 그대로 옮김). 알파벳이 전혀 없는
-    제목은 'X'로 폴백.
+    Mitigates cross-document id collisions: when several candidate
+    documents' headers appear together in one prompt, a purely numeric id
+    like "p3" overlaps across documents, which can lead an agent to
+    hallucinate a pid belonging to the wrong one. A per-document prefix at
+    least makes "which document does this pid belong to" visually
+    distinguishable (same scheme as the same-named function in
+    data_utils/mre_generator3.py, carried over as-is for exact
+    reproduction). A title with no letters at all falls back to 'X'.
     """
     m = re.search(r"[A-Za-z]", title)
     return m.group(0).upper() if m else "X"
 
 
 def _wiki_apply_title_letter_ids(nodes: list[dict], title: str) -> None:
-    """nodes(문단 타입만)의 id를 "p{N}" → "{letter}{N}"으로 in-place 재작성.
+    """Rewrite the id of paragraph-type nodes in place, from "p{N}" to "{letter}{N}".
 
-    _wiki_build_structure_tree()가 부여한 원래 등장 순서(N)는 그대로 유지하고 접두어만
-    바꾼다. "p{N}" 폴백 패턴에만 매치하므로, <p id="...">처럼 HTML이 실제로 갖고 있던
-    id(드묾)는 건드리지 않는다. LLM 호출(strip 이후) 전에 호출해야 LLM도 새 id를 보고
-    그대로 echo해서, 이후 XML 조립까지 새 id 체계로 일관되게 흐른다 — HTMLSiteAdapter의
-    assign_ids 훅으로 extract() 직후, strip() 이전에 적용된다.
+    Keeps the original appearance order (N) assigned by
+    _wiki_build_structure_tree() and only changes the prefix. It only
+    matches the "p{N}" fallback pattern, so it leaves alone any id the HTML
+    actually had (e.g. a real <p id="...">, which is rare). This must run
+    before the LLM call (after strip()) so the LLM sees and echoes the new
+    ids, keeping the new id scheme consistent all the way through XML
+    assembly. It's applied via HTMLSiteAdapter's assign_ids hook, right
+    after extract() and before strip().
     """
     letter = _wiki_title_letter_prefix(title)
     for node in nodes:
@@ -440,40 +456,50 @@ def _wiki_apply_title_letter_ids(nodes: list[dict], title: str) -> None:
 
 
 # ─────────────────────────────────────────────
-# 내장 사이트 어댑터 등록
+# Built-in site adapter registration
 # ─────────────────────────────────────────────
 
 def _wiki_preprocess(soup: BeautifulSoup) -> list[tuple[int, str]]:
-    # v3 전용 전처리 — References/See also/External links 등 부록 section을 통째로 지우고
-    # (그대로 두면 IMDb 링크/스텁 안내문 같은 부록 콘텐츠에도 desc/keys가 생겨버림),
-    # 짧은 subsection의 문단들을 하나로 통합한다 (노이즈성 개별 desc/keys 방지).
-    # data_utils/mre_generator3.py의 process_db_document_async2와 동일 순서 — extract()와
-    # fetch() 양쪽 모두 이 함수를 그대로 다시 적용하는 "single truth"이므로, 여기서 순서나
-    # 함수를 바꾸면 생성-fetch 간 id 매핑이 어긋난다.
+    # v3-only preprocessing: strips appendix sections (References/See
+    # also/External links, etc.) entirely, since leaving them in would give
+    # appendix content like IMDb links or stub notices their own desc/keys
+    # too, then merges short subsections' paragraphs into one (avoiding
+    # noisy per-paragraph desc/keys). Same order as
+    # data_utils/mre_generator3.py's process_db_document_async2. Both
+    # extract() and fetch() reapply this exact function as their single
+    # source of truth, so changing the order or the functions here breaks
+    # the id mapping between generation and fetch.
     appendix_sections = _strip_appendix_sections(soup)
     _consolidate_short_sections(soup)
     return appendix_sections
 
 
 def _wiki_fetch(html: str, node_id: str) -> str:
-    """MRE 가 embed된 Wikipedia 문서 html에서 node_id 문단의 전체(비절단) 텍스트를 가져온다.
+    """Fetch node_id's full (untruncated) paragraph text from a Wikipedia document's html with MRE embedded.
 
-    _wiki_build_structure_tree()가 부여하는 순번과 일치시키려면 생성 시점과 동일하게
-    _wiki_preprocess(부록 제거 + 짧은 section 통합)를 다시 적용한 뒤 같은 규칙
-    (<p>/<ul>/<ol>, ol.references 제외, 매칭 요소 내부로 재귀 안 함, 빈 문단 스킵)으로
-    walk 해야 한다 — extract()의 _wiki_extract_node_text()는 LLM 프롬프트용으로 400자에서
-    자르지만, 여기서는 에이전트가 실제로 읽을 문단이므로 자르지 않는다.
+    To match the ordering _wiki_build_structure_tree() assigned, this must
+    reapply the exact same generation-time preprocessing (_wiki_preprocess:
+    stripping appendices and consolidating short sections) and then walk
+    with the same rules (<p>/<ul>/<ol>, excluding ol.references, no
+    recursion into a matched element's contents, skipping empty
+    paragraphs). extract()'s _wiki_extract_node_text() truncates to 400
+    characters for the LLM prompt, but this function returns the untruncated
+    text an agent will actually read.
 
-    node_id 가 "full"이면 문서의 모든 문단 텍스트를 이어붙여 반환한다(문단 하나만 보고는
-    부족하고 문서 전체가 필요하다고 판단하는 워크플로용). 그 외에는 접두 알파벳을 무시하고
-    끝의 숫자만으로 몇 번째 문단인지 찾는다 — "p1"/"B1"/"P15" 등 어떤 접두어 스킴이든
-    (assign_ids 가 뭘 적용했든) 동일하게 동작한다. 찾지 못하면 빈 문자열을 반환한다
-    (예외를 던지지 않음 — core/pipeline.py 의 _fetch_blocks_v3 와 동일 계약).
+    If node_id is "full", returns every paragraph's text concatenated
+    (for workflows that decide, after seeing just one paragraph, that they
+    need the whole document). Otherwise, the leading letter prefix is
+    ignored and only the trailing number is used to find the paragraph's
+    position, so any prefix scheme works the same way regardless of what
+    assign_ids applied ("p1"/"B1"/"P15", etc.). Returns an empty string if
+    not found, rather than raising, matching core/pipeline.py's
+    _fetch_blocks_v3 contract.
 
-    이 문서에 <script type="application/mre+xml"> 안에 (레거시 스키마의) <resources>
-    <target id="..."> 가 있으면 문단 텍스트 뒤에 이어붙인다 — mre 의 자체 생성 스키마
-    (build_mre_xml)는 <resources>를 만들지 않지만, 다른 생성기로 만들어진 문서와도
-    호환되도록 유지한다.
+    If this document's <script type="application/mre+xml"> contains a
+    legacy-schema <resources><target id="..."> block, its content is
+    appended after the paragraph text. mre's own generation schema
+    (build_mre_xml) never produces <resources>, but this stays compatible
+    with documents made by other generators.
     """
     soup = BeautifulSoup(html, "lxml")
     _wiki_preprocess(soup)
@@ -496,7 +522,7 @@ def _wiki_fetch(html: str, node_id: str) -> str:
             text = node.get_text(separator=" ", strip=True)
             if text:
                 blocks.append(node)
-            return  # 매칭된 요소 내부로는 descend 안 함
+            return  # don't descend into a matched element's contents
         for child in node.children:
             _walk(child)
 
@@ -546,7 +572,7 @@ def _wiki_fetch(html: str, node_id: str) -> str:
 
 
 # ─────────────────────────────────────────────
-# 내장 사이트 어댑터 등록
+# Built-in site adapter registration
 # ─────────────────────────────────────────────
 
 def _register_builtin_sites() -> None:
@@ -565,24 +591,27 @@ def _register_builtin_sites() -> None:
 
 
 # ─────────────────────────────────────────────
-# 플러그인 자동 발견 (entry points)
+# Plugin auto-discovery (entry points)
 # ─────────────────────────────────────────────
-# 사이트 소유자는 자기 어댑터를 별도 pip 패키지로 배포하고, 그 패키지의
-# pyproject.toml 에 다음처럼 선언한다:
+# A site owner distributes their own adapter as a separate pip package and
+# declares it in that package's pyproject.toml like this:
 #
 #   [project.entry-points."mre.site_adapters"]
 #   my-site = "my_mre_adapter:ADAPTER"
 #
-# 값은 HTMLSiteAdapter 인스턴스이거나, 인스턴스를 반환하는 인자 없는 factory
-# 여야 한다. mre 를 import 하는 시점에 설치된 모든 그런 패키지를 스캔해 자동
-# 등록한다 — 코어 라이브러리 코드를 고치지 않고도 새 사이트가 추가된다.
+# The value must be either an HTMLSiteAdapter instance, or a no-argument
+# factory that returns one. Every such installed package is scanned and
+# auto-registered when mre is imported, so a new site can be added without
+# touching the core library code.
 #
-# discover_plugin_adapters() 는 이 모듈이 아니라 mre/__init__.py 맨 끝에서 호출된다
-# (여기서 바로 호출하면 안 됨) — 플러그인이 관례적으로 `from mre import HTMLSiteAdapter`
-# 로 임포트하는데, 이 모듈은 mre.__init__ 이 자신을 임포트하는 도중에 로드되므로
-# 그 시점엔 mre 패키지가 아직 다 초기화되지 않아 순환 임포트가 난다. import 이후 새
-# 플러그인을 설치했다면(런타임 재설치) 다시 호출해도 안전 — register_site() 는 멱등적으로
-# 덮어쓴다.
+# discover_plugin_adapters() is called from the end of mre/__init__.py, not
+# from this module (don't call it directly here): plugins conventionally
+# import `from mre import HTMLSiteAdapter`, but this module is loaded while
+# mre.__init__ is still in the middle of importing itself, so the mre
+# package isn't fully initialized yet at that point and a circular import
+# would result. It's safe to call again if a new plugin gets installed
+# after import (a runtime reinstall) — register_site() overwrites
+# idempotently.
 _ENTRY_POINT_GROUP = "mre.site_adapters"
 
 
@@ -595,17 +624,17 @@ def discover_plugin_adapters() -> None:
         try:
             obj = ep.load()
             adapter = obj() if not isinstance(obj, HTMLSiteAdapter) else obj
-        except Exception as e:  # noqa: BLE001 — 플러그인 하나의 실패가 나머지 발견을 막으면 안 됨
-            log.warning("mre.site_adapters entry point 로드 실패 [%s]: %s", ep.name, e)
+        except Exception as e:  # noqa: BLE001 — one plugin's failure must not block discovering the rest
+            log.warning("Failed to load mre.site_adapters entry point [%s]: %s", ep.name, e)
             continue
         if not isinstance(adapter, HTMLSiteAdapter):
             log.warning(
-                "mre.site_adapters entry point %r 가 HTMLSiteAdapter 를 반환하지 않음: %r",
+                "mre.site_adapters entry point %r did not return an HTMLSiteAdapter: %r",
                 ep.name, adapter,
             )
             continue
         register_site(adapter)
-        log.info("플러그인 사이트 어댑터 등록: %s (entry point %r)", adapter.name, ep.name)
+        log.info("Registered plugin site adapter: %s (entry point %r)", adapter.name, ep.name)
 
 
 _register_builtin_sites()

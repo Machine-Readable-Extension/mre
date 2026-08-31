@@ -1,22 +1,27 @@
 from __future__ import annotations
 
 """
-OPC(Open Packaging Conventions) zip 컨테이너 기반 문서 어댑터 — hwpx, docx.
+Document adapters for OPC (Open Packaging Conventions) zip containers: hwpx, docx.
 
-hwpx와 docx는 내부가 둘 다 zip이고, MRE는 그 zip root에 mre.xml 파일 하나를
-추가하는 방식으로 임베딩된다 (archive 기반 포맷 공통 규칙 — html의 <head><script>
-삽입에 대응). 이 embed/exists 연산은 두 포맷에서 완전히 동일한 zip 조작이라
-insert_mre_into_zip / _mre_xml_exists_in_zip 하나씩만 두고 공용으로 쓴다
-(data_utils/mre_generator.py(v1)에서 이 라이브러리 배포 경계 안으로 이식).
+Both hwpx and docx are zip files internally, and MRE gets embedded by
+adding a single mre.xml file at the zip root (the archive-format
+equivalent of inserting a <head><script> tag in html). This embed/exists
+operation is identical zip manipulation for both formats, so
+insert_mre_into_zip / _mre_xml_exists_in_zip are each defined once and
+shared (ported from data_utils/mre_generator.py (v1) into this library's
+distribution boundary).
 
-파싱(extract)만 포맷별로 다르다:
-  - hwpx: Contents/section*.xml 안의 <hp:p>/<hp:t> — 헤딩 개념이 없어 문단만 나온다
-    (data_utils/mre_generator.py(v1)의 build_structure_tree_hwpx를 이식).
-  - docx: word/document.xml 안의 <w:p> — pStyle이 HeadingN/Title이면 heading,
-    아니면 문단으로 분류 (신규 구현, 이 레포에 기존 docx 처리 코드가 없었음).
-    표(<w:tbl>) 내부 문단은 이번 구현 범위에서 제외 — hwpx의 "표는 바깥 문단에
-    흡수" 같은 규칙이 docx엔 없어 임의로 흡수시키면 표 순서가 뒤틀리므로,
-    본문 흐름(body 직속 <w:p>)만 다룬다.
+Only parsing (extract) differs per format:
+  - hwpx: <hp:p>/<hp:t> inside Contents/section*.xml. There's no heading
+    concept, so only paragraphs come out (ported from
+    data_utils/mre_generator.py (v1)'s build_structure_tree_hwpx).
+  - docx: <w:p> inside word/document.xml. Classified as a heading if
+    pStyle is HeadingN/Title, otherwise a paragraph (a new implementation;
+    this repo had no existing docx handling code). Paragraphs inside
+    tables (<w:tbl>) are out of scope here: docx has no equivalent of
+    hwpx's "absorb into the surrounding paragraph" rule for tables, and
+    absorbing them arbitrarily would scramble table order, so only
+    body-level <w:p> (the main text flow) is handled.
 """
 
 import os
@@ -58,7 +63,7 @@ class OPCAdapter:
 
 
 # ─────────────────────────────────────────────
-# docx 파싱 (신규)
+# docx parsing (new)
 # ─────────────────────────────────────────────
 
 _W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -67,11 +72,12 @@ _HEADING_STYLE_RE = re.compile(r"heading\s*(\d)", re.IGNORECASE)
 
 
 def _heading_level_from_style(style_val: str | None) -> int | None:
-    """word paragraph의 pStyle 값에서 heading level을 뽑는다.
+    """Extract a heading level from a word paragraph's pStyle value.
 
-    python-docx/LibreOffice/MS Word가 만드는 기본 스타일 ID는 로캘과 무관하게
-    "Heading1".."Heading9" (또는 "Title")로 고정되는 것이 일반적 관례이므로
-    이를 신뢰한다 — 커스텀 템플릿이 스타일 ID 자체를 바꾼 경우는 감지되지 않는다.
+    python-docx/LibreOffice/MS Word conventionally generate default style
+    ids as "Heading1".."Heading9" (or "Title") regardless of locale, so this
+    trusts that convention. A custom template that renames the style ids
+    themselves won't be detected.
     """
     if not style_val:
         return None
@@ -84,9 +90,9 @@ def _heading_level_from_style(style_val: str | None) -> int | None:
 
 
 def build_structure_tree_docx(docx_path: Path) -> list[dict]:
-    """DOCX(word/document.xml)에서 heading/paragraph 노드 리스트를 문서 순서대로 추출.
+    """Extract a heading/paragraph node list from DOCX (word/document.xml), in document order.
 
-    body 직속 <w:p>만 다룬다 (표 안 <w:p>는 제외 — 모듈 docstring 참조).
+    Only handles body-level <w:p> (paragraphs inside tables are excluded, see module docstring).
 
     Returns
     -------
@@ -106,7 +112,7 @@ def build_structure_tree_docx(docx_path: Path) -> list[dict]:
 
     for el in body:
         if el.tag != f"{_W_NS}p":
-            continue  # w:tbl 등 문단이 아닌 요소는 건너뜀
+            continue  # skip non-paragraph elements such as w:tbl
 
         style_val = None
         p_pr = el.find(f"{_W_NS}pPr")
@@ -130,22 +136,25 @@ def build_structure_tree_docx(docx_path: Path) -> list[dict]:
 
 
 # ─────────────────────────────────────────────
-# hwpx 파싱/임베딩 (data_utils/mre_generator.py v1에서 이식)
+# hwpx parsing/embedding (ported from data_utils/mre_generator.py v1)
 # ─────────────────────────────────────────────
-# 각 단락은 OWPML 의 <hp:p> 요소이고, 그 안의 <hp:t> 들이 실제 텍스트.
-# ElementTree 는 태그를 ``{namespace-uri}localname`` 으로 노출하므로 endswith 로 식별.
+# Each paragraph is an OWPML <hp:p> element, and the <hp:t> elements inside
+# it hold the actual text. ElementTree exposes tags as
+# ``{namespace-uri}localname``, so they're matched with endswith.
 
 _HWPX_SECTION_RE = re.compile(r"^Contents/section\d+\.xml$")
 _HWPX_SECTION_IDX_RE = re.compile(r"\d+")
 _MRE_ENTRY_NAME = "mre.xml"
-_HWPX_MIN_PARA_CHARS = 50   # 이 길이 이하의 단락은 뒤따라오는 단락에 통합 (제목/날짜 라벨 등 파편 흡수)
+_HWPX_MIN_PARA_CHARS = 50   # paragraphs at or below this length get merged into the following one (absorbs fragments like title/date labels)
 
 
 def _coalesce_short_paragraphs(nodes: list[dict]) -> list[dict]:
-    """50자 이하 단락은 다음 단락에 통합. 끝까지 남으면 직전 단락에 합쳐 흡수.
+    """Merge paragraphs of 50 characters or fewer into the following paragraph; a trailing leftover merges into the previous one instead.
 
-    HWPX 보도자료의 ``보도자료`` / ``보도시점`` / 날짜 등 짧은 라벨 단락이 의미상 다음
-    본문 단락의 일부이므로 LLM 에 보낼 때도 묶어서 보내는 게 자연스럽다.
+    HWPX press releases often have short label paragraphs (e.g. "press
+    release", "release date", or a bare date) that are semantically part of
+    the following body paragraph, so it's more natural to send them to the
+    LLM merged together.
     """
     if not nodes:
         return nodes
@@ -159,7 +168,7 @@ def _coalesce_short_paragraphs(nodes: list[dict]) -> list[dict]:
             continue
         merged.append({
             "type": "paragraph",
-            "id": "",  # 아래에서 renumber
+            "id": "",  # renumbered below
             "text": combined,
         })
         buf = ""
@@ -175,11 +184,11 @@ def _coalesce_short_paragraphs(nodes: list[dict]) -> list[dict]:
 
 
 def build_structure_tree_hwpx(hwpx_path: Path) -> list[dict]:
-    """HWPX OPC ZIP 에서 paragraph 노드 리스트를 추출.
+    """Extract a paragraph node list from an HWPX OPC ZIP.
 
-    최외곽 <hp:p> 하나를 하나의 단락으로 본다. 표/텍스트박스 등 내부에 nested <hp:p> 가
-    있어도 그 텍스트는 모두 외곽 <hp:p> 의 단락 텍스트로 흡수되며, 내부 <hp:p> 는 별도
-    paragraph 로 추가되지 않는다 (중복 카운팅 방지).
+    Each outermost <hp:p> counts as one paragraph. A nested <hp:p> inside a
+    table/text box, etc., has its text absorbed into the outer <hp:p>'s
+    paragraph text and is not added as a separate paragraph (avoids double-counting).
 
     Returns
     -------
@@ -202,7 +211,7 @@ def build_structure_tree_hwpx(hwpx_path: Path) -> list[dict]:
             with zf.open(sec) as xml_file:
                 tree = ET.parse(xml_file)
                 root = tree.getroot()
-                # ElementTree 는 부모 포인터를 노출하지 않으므로 직접 parent map 작성.
+                # ElementTree doesn't expose parent pointers, so build a parent map manually.
                 parent_map = {child: parent for parent in tree.iter() for child in parent}
 
                 def _has_p_ancestor(elem) -> bool:
@@ -217,7 +226,7 @@ def build_structure_tree_hwpx(hwpx_path: Path) -> list[dict]:
                     if not elem.tag.endswith("}p"):
                         continue
                     if _has_p_ancestor(elem):
-                        # nested <hp:p> — 최외곽 단락에 흡수됨
+                        # nested <hp:p>: absorbed into the outermost paragraph
                         continue
                     text_parts: list[str] = []
                     for sub in elem.iter():
@@ -258,10 +267,11 @@ def extract_mre_xml_opc(opc_path: str | Path) -> str | None:
 
 
 def insert_mre_into_zip(opc_path: Path, mre_xml: str) -> None:
-    """OPC ZIP root 에 mre.xml 을 삽입한다 (이미 있으면 덮어쓴다).
+    """Insert mre.xml at the OPC ZIP root, overwriting it if already present.
 
-    zipfile 은 in-place 삭제/수정을 지원하지 않으므로 새 zip 으로 복사한 뒤 ``os.replace``
-    로 원자적 교체. 같은 디렉토리에 임시 파일을 만들어 cross-device rename 회피.
+    zipfile doesn't support in-place delete/modify, so this copies to a new
+    zip and atomically swaps it in with ``os.replace``. The temp file is
+    created in the same directory to avoid a cross-device rename.
     """
     if not opc_path.exists():
         raise FileNotFoundError(opc_path)
@@ -274,7 +284,7 @@ def insert_mre_into_zip(opc_path: Path, mre_xml: str) -> None:
              zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as zout:
             for item in zin.infolist():
                 if item.filename == _MRE_ENTRY_NAME:
-                    continue  # 새 mre.xml 로 대체
+                    continue  # replaced by the new mre.xml
                 zout.writestr(item, zin.read(item.filename))
             zout.writestr(_MRE_ENTRY_NAME, mre_xml.encode("utf-8"))
         os.replace(tmp_path, opc_path)
@@ -284,13 +294,16 @@ def insert_mre_into_zip(opc_path: Path, mre_xml: str) -> None:
 
 
 # ─────────────────────────────────────────────
-# fetch (hwpx/docx 공통 — id 조회 로직은 동일, extract 함수만 다름)
+# fetch (shared by hwpx/docx: the id-lookup logic is identical, only extract differs)
 # ─────────────────────────────────────────────
-# html_site_adapter._wiki_fetch와 달리 별도 재파싱 로직이 필요 없다: extract()가 만드는
-# paragraph 노드의 text는 (Wikipedia의 _wiki_extract_node_text와 달리) LLM 프롬프트용으로
-# 잘리지 않은 전체 텍스트이므로, extract()를 그대로 다시 불러 인덱싱하면 곧 fetch가 된다 —
-# 진짜 "single truth"(생성 시점과 fetch 시점이 완전히 같은 함수를 씀). id 조회 로직 자체는
-# mre.pdf_adapter와도 공유하므로 mre.nodes.fetch_paragraph_by_id에 있다.
+# Unlike html_site_adapter._wiki_fetch, no separate re-parsing logic is
+# needed here: extract()'s paragraph node text is already the full,
+# untruncated text meant for the LLM prompt (unlike Wikipedia's
+# _wiki_extract_node_text), so simply re-running extract() and indexing into
+# it amounts to a fetch. This is a genuine single source of truth:
+# generation time and fetch time use the exact same function. The id-lookup
+# logic itself is shared with mre.pdf_adapter, so it lives in
+# mre.nodes.fetch_paragraph_by_id.
 
 
 def _hwpx_fetch(path: Path, node_id: str) -> str:
@@ -302,7 +315,7 @@ def _docx_fetch(path: Path, node_id: str) -> str:
 
 
 # ─────────────────────────────────────────────
-# 어댑터 등록 (hwpx/docx 공통 — embed/exists는 두 포맷에서 동일한 zip 조작)
+# Adapter registration (shared by hwpx/docx: embed/exists are the same zip operation for both formats)
 # ─────────────────────────────────────────────
 
 _REGISTRY: dict[DocFormat, OPCAdapter] = {}
@@ -312,7 +325,7 @@ def get_opc_adapter(fmt: DocFormat) -> OPCAdapter:
     try:
         return _REGISTRY[fmt]
     except KeyError:
-        raise ValueError(f"OPC 어댑터 미등록 포맷: {fmt!r} (등록됨: {list(_REGISTRY)})") from None
+        raise ValueError(f"No OPC adapter registered for format: {fmt!r} (registered: {list(_REGISTRY)})") from None
 
 
 def parse_opc(path: str | Path, fmt: DocFormat) -> list[dict]:
@@ -334,7 +347,7 @@ def fetch_opc(path: str | Path, node_id: str, fmt: DocFormat) -> str:
     adapter = get_opc_adapter(fmt)
     if adapter.fetch is None:
         raise FetchNotSupportedError(
-            f"어댑터 {adapter.name!r} 는 fetch 를 구현하지 않았습니다."
+            f"Adapter {adapter.name!r} does not implement fetch."
         )
     return adapter.fetch(Path(path), node_id)
 
@@ -352,7 +365,7 @@ def _register_builtin_adapters() -> None:
         name="docx",
         extract=build_structure_tree_docx,
         strip=strip_to_text_nodes,
-        embed=insert_mre_into_zip,   # mre.xml as a plain zip entry — 포맷 무관 동일 연산
+        embed=insert_mre_into_zip,   # mre.xml as a plain zip entry: identical operation regardless of format
         exists=_mre_xml_exists_in_zip,
         fetch=_docx_fetch,
     )

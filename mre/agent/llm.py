@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 """
-OpenAI-호환 client 하나로 action(JSON schema 강제) / 자유 텍스트 생성 둘 다 처리하는
-얇은 래퍼. mre.generate_mre() 와 동일한 관례 — client 와 model 은 호출자가 항상 넘긴다,
-라이브러리가 기본 모델/백엔드를 강제하지 않는다.
+A thin wrapper around a single OpenAI-compatible client that handles both
+action generation (JSON-schema-enforced) and free-text generation. Same
+convention as mre.generate_mre(): the caller always passes client and
+model, and the library never hardcodes a default model or backend.
 
-core/mre.py 의 OpenAIGuidedLLM 을 이 라이브러리 배포 경계 안으로 옮겨왔다. in-process
-vLLM 버전(GuidedLLM — config.py 글로벌 상수 + 로컬 GPU 모델 로딩에 의존)은 포팅하지
-않는다 — 로컬 vLLM 을 쓰고 싶으면 이미 OpenAI-호환 서버로 띄운 뒤 client 의 base_url 로
-가리키면 된다.
+Ported from core/mre.py's OpenAIGuidedLLM into this library's distribution
+boundary. The in-process vLLM version (GuidedLLM, which depends on
+config.py global constants and local GPU model loading) is not ported: to
+use local vLLM, stand it up as an OpenAI-compatible server and point
+client's base_url at it.
 """
 
 import time
@@ -24,11 +26,12 @@ MAX_ANSWER_TOKENS = 1024
 async def generate_action(
     client: openai.AsyncOpenAI, model: str, messages: list[dict], schema: dict,
 ) -> tuple[str, dict]:
-    """schema 로 제약된 JSON 액션 하나를 생성한다. (raw_content, usage_stats) 반환.
+    """Generate one JSON action constrained by schema. Returns (raw_content, usage_stats).
 
-    vLLM OpenAI-호환 서버(0.6+)는 response_format={"type":"json_schema",...} 로 guided
-    decoding 을 지원하지만, 일부 게이트웨이는 json_schema 자체를 거부하고 json_object +
-    extra_body.guided_json 만 받는다 — 순서대로 시도해서 폭넓게 호환한다.
+    vLLM's OpenAI-compatible server (0.6+) supports guided decoding via
+    response_format={"type":"json_schema",...}, but some gateways reject
+    json_schema outright and only accept json_object plus
+    extra_body.guided_json. Both are tried in order for broad compatibility.
     """
     kwargs = dict(
         model=model,
@@ -47,7 +50,7 @@ async def generate_action(
     try:
         resp = await client.chat.completions.create(**kwargs)  # type: ignore[call-overload]
     except TypeError:
-        # 아주 옛 클라이언트: json_schema 미지원 → guided_json fallback
+        # A very old client that doesn't support json_schema: fall back to guided_json
         kwargs["response_format"] = {"type": "json_object"}
         kwargs["extra_body"] = {"guided_json": schema}
         resp = await client.chat.completions.create(**kwargs)  # type: ignore[call-overload]
@@ -61,7 +64,7 @@ async def generate_action(
             kwargs["extra_body"] = {"guided_json": schema}
             resp = await client.chat.completions.create(**kwargs)  # type: ignore[call-overload]
         elif "guided_json" in err_s or "extra" in err_s:
-            # 게이트웨이 자체가 extra_body 미지원: JSON-mode만
+            # The gateway itself doesn't support extra_body: fall back to plain JSON mode
             kwargs.pop("extra_body", None)
             resp = await client.chat.completions.create(**kwargs)  # type: ignore[call-overload]
         else:
@@ -74,7 +77,7 @@ async def generate_action(
 async def generate_text(
     client: openai.AsyncOpenAI, model: str, messages: list[dict], *, max_tokens: int = 512,
 ) -> tuple[str, dict]:
-    """자유 텍스트를 생성한다 (턴 한도 소진 시 강제 답변용). (text, usage_stats) 반환."""
+    """Generate free-form text (used to force an answer once the turn budget is exhausted). Returns (text, usage_stats)."""
     t0 = time.perf_counter()
     resp = await client.chat.completions.create(
         model=model, messages=messages, max_completion_tokens=max_tokens,  # type: ignore[arg-type]

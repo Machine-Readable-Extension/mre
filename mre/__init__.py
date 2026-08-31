@@ -39,9 +39,11 @@ from mre.pdf_adapter import (
 )
 from mre.reader import extract_mre_xml
 
-# 내장 어댑터(Wikipedia 등)는 mre.html_site_adapter 모듈 로드 시 이미 등록됐다. 플러그인
-# 발견은 여기, mre 패키지의 다른 모든 export 가 이미 바인딩된 뒤에 실행해야 한다 — 플러그인이
-# 관례대로 `from mre import HTMLSiteAdapter` 로 임포트할 때 순환 임포트가 나지 않도록.
+# Built-in adapters (Wikipedia, etc.) are already registered by the time
+# mre.html_site_adapter is imported above. Plugin discovery has to run here,
+# after every other export of this package is bound, so that a plugin
+# importing `from mre import HTMLSiteAdapter` (the documented convention)
+# doesn't hit a circular import.
 discover_plugin_adapters()
 
 __all__ = [

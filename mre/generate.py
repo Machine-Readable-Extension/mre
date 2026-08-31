@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 """
-포맷 감지(또는 명시적 지정) + 사이트/포맷 어댑터 dispatch + LLM 생성을 하나로
-묶은 최상위 진입점 — generate_mre().
+generate_mre(): the top-level entry point that ties together format
+detection (or an explicit override), site/format adapter dispatch, and
+LLM generation.
 
-모델 선택은 라이브러리가 강제하지 않는다: 호출자가 openai.AsyncOpenAI 클라이언트와
-model 이름을 직접 넘긴다. vLLM 같은 OpenAI-호환 백엔드도 base_url만 다른 동일한
-클라이언트 타입이라 이 함수는 백엔드가 무엇인지 몰라도 된다 — 항상 (client, model)
-두 인자로만 다룬다.
+The library doesn't hardcode a model choice: the caller passes an
+openai.AsyncOpenAI client and a model name directly. An OpenAI-compatible
+backend like vLLM is the same client type with a different base_url, so this
+function never needs to know which backend it's talking to. It only ever
+deals with the (client, model) pair.
 
-지원 포맷: html, hwpx, docx, pdf. hwp는 아직 어댑터가 없어 NotImplementedError.
-pdf는 파싱/embed/fetch는 되지만(mre.pdf_adapter 참조) "생성"은 여전히 안 된다 —
-여기서 하는 일은 LLM으로 새로 만든 mre_xml을 이미 존재하는 pdf에 첨부하는 것뿐,
-LLM이 pdf 자체를 authoring하는 게 아니라서 다른 포맷과 코드 경로는 동일하다.
+Supported formats: html, hwpx, docx, pdf. hwp has no adapter yet, so it
+raises NotImplementedError. pdf supports parsing/embed/fetch (see
+mre.pdf_adapter) but not generation: all this function does for a pdf is
+attach an LLM-generated mre_xml to an already-existing pdf. The LLM never
+authors the pdf itself, so the code path is otherwise identical to the
+other formats.
 """
 
 from dataclasses import dataclass, field
@@ -36,8 +40,8 @@ class MREGenerationResult:
     format: DocFormat
     title: str
     mre_xml: str
-    embedded_html: str | None = None    # format=HTML일 때만 채워짐
-    embedded_path: Path | None = None   # format=HWPX/DOCX/PDF일 때만 채워짐 (source와 동일 경로, in-place 갱신됨)
+    embedded_html: str | None = None    # only set when format=HTML
+    embedded_path: Path | None = None   # only set when format=HWPX/DOCX/PDF (same path as source, updated in place)
     stats: dict = field(default_factory=dict)
 
 
@@ -97,22 +101,24 @@ async def generate_mre(
 
     if fmt is DocFormat.HTML:
         if url is None:
-            raise ValueError("format=html 생성에는 url이 필요합니다 (사이트별 어댑터 선택용).")
+            raise ValueError("format=html generation requires url (used to pick the site-specific adapter).")
         if not isinstance(source, str):
             raise TypeError(
-                f"format=html 생성에는 source가 원문 HTML 텍스트(str)여야 합니다: {type(source)}"
+                f"format=html generation requires source to be raw HTML text (str), got: {type(source)}"
             )
         html = source
         site_adapter = get_site_adapter(url, fallback=html_fallback_adapter)
         soup = BeautifulSoup(html, "lxml")
         if site_adapter.preprocess is not None:
-            # in-place로 soup를 정리(예: 부록 section 제거, 짧은 section 통합).
-            # embed는 이 soup가 아니라 항상 원본 html 문자열에 대해 수행한다 (아래 참조).
+            # Cleans up soup in place (e.g. dropping appendix sections, merging
+            # short sections). embed always operates on the original html
+            # string below, never on this soup.
             site_adapter.preprocess(soup)
         raw_nodes = site_adapter.extract(soup)
         if site_adapter.assign_ids is not None:
-            # in-place로 문단 id 를 재작성 (예: Wikipedia 의 제목 첫 글자 접두어 —
-            # cross-document id collision 완화, mre_generator3.py 와 동일 규칙).
+            # Rewrites paragraph ids in place (e.g. Wikipedia's title-initial
+            # prefix, to reduce cross-document id collisions; same rule as
+            # mre_generator3.py).
             site_adapter.assign_ids(raw_nodes, title)
         nodes = site_adapter.strip(raw_nodes)
     elif fmt in (DocFormat.HWPX, DocFormat.DOCX):
@@ -123,7 +129,7 @@ async def generate_mre(
         path = Path(source)
         nodes = parse_pdf(path)
     else:
-        raise NotImplementedError(f"{fmt.value} 어댑터는 아직 없음 (지원: html, hwpx, docx, pdf)")
+        raise NotImplementedError(f"No adapter for {fmt.value} yet (supported: html, hwpx, docx, pdf)")
 
     llm_data, gen_stats = await call_llm_chunked_async(
         client, title, nodes, model=model, guided=guided, model_ctx=model_ctx,
@@ -140,9 +146,10 @@ async def generate_mre(
         _merge_stats(stats, repair_stats)
 
     if fmt is DocFormat.HTML:
-        # fetch_block() 이 나중에 이 값을 재계산해 비교할 수 있도록 문서에 새겨둔다 —
-        # site_adapter.fetch() 를 나중에 실행할 때 그 사이 어댑터 파싱 로직이 바뀌었는지
-        # (id-to-paragraph 매핑이 어긋났을 수 있는지) 알아내는 유일한 방법.
+        # Stamped into the document so a later fetch_block() can recompute
+        # and compare it. This is the only way to tell, when site_adapter.fetch()
+        # runs later, whether the adapter's parsing logic changed in the
+        # meantime (which could have shifted the id-to-paragraph mapping).
         mre_xml = build_mre_xml(
             llm_data, nodes, title=title,
             generator=site_adapter.name,

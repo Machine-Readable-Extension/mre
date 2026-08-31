@@ -21,10 +21,11 @@ implicitly.** Two independent reasons:
    mre/tests/fixtures/construction_safety_cost_notice.hwp (a real 27-table
    government notice): the opening prose paragraphs matched
    mre.hwp_adapter.parse_hwp()'s own output character-for-character, and
-   ~86% of total characters survived, but a revision-history entry ("고시
-   제88 - 13호") was not found anywhere in the converted document at all --
-   genuine loss from the H2Orestart import filter itself, not merely
-   mre.opc_adapter's documented table-cell-paragraph exclusion. This is a
+   ~86% of total characters survived, but a revision-history entry reading
+   "Notification No. 88-13" was not found anywhere in the converted
+   document at all -- genuine loss from the H2Orestart import filter
+   itself, not merely mre.opc_adapter's documented table-cell-paragraph
+   exclusion. This is a
    community reverse-engineered filter, not Hancom's own converter, and it
    should be treated as best-effort: verify important documents' output
    before trusting it, especially anything table-heavy.
@@ -97,7 +98,7 @@ def convert_hwp(
         code), timed out, or produced no output file.
     """
     if target not in _TARGET_EXTENSIONS:
-        raise ValueError(f"target은 DocFormat.DOCX 또는 DocFormat.PDF만 지원합니다: {target!r}")
+        raise ValueError(f"target only supports DocFormat.DOCX or DocFormat.PDF: {target!r}")
 
     path = Path(path)
     if not path.exists():
@@ -105,9 +106,10 @@ def convert_hwp(
 
     ext = _TARGET_EXTENSIONS[target]
     logger.warning(
-        "convert_hwp(): %r -> .%s 변환은 LibreOffice+H2Orestart(커뮤니티 리버스엔지니어링 "
-        "필터) 기반 best-effort입니다. 실제 정부 문서 테스트에서 표 안 콘텐츠 일부가 "
-        "누락되는 것을 확인했습니다 — 중요 문서는 변환 결과를 직접 검증하세요.",
+        "convert_hwp(): converting %r -> .%s is best-effort via LibreOffice+H2Orestart "
+        "(a community reverse-engineered filter). Testing against a real government "
+        "document found some in-table content missing after conversion. Verify the "
+        "output yourself for important documents.",
         str(path), ext,
     )
 
@@ -124,17 +126,17 @@ def convert_hwp(
         )
     except FileNotFoundError as e:
         raise LibreOfficeNotAvailableError(
-            f"{soffice_bin!r}를 실행할 수 없습니다. LibreOffice(+H2Orestart 확장, "
-            "https://github.com/ebandal/H2Orestart)가 설치되어 있어야 합니다 — "
-            "mre/README.md의 'Legacy HWP' 섹션 참조."
+            f"Could not run {soffice_bin!r}. LibreOffice (with the H2Orestart extension, "
+            "https://github.com/ebandal/H2Orestart) must be installed. "
+            "See the 'Legacy HWP' section in mre/README.md."
         ) from e
     except subprocess.TimeoutExpired as e:
-        raise HwpConversionError(f"{path} -> {ext} 변환이 {timeout}초 안에 끝나지 않았습니다.") from e
+        raise HwpConversionError(f"Conversion of {path} -> {ext} did not finish within {timeout} seconds.") from e
 
     out_path = outdir / f"{path.stem}.{ext}"
     if proc.returncode != 0 or not out_path.exists():
         raise HwpConversionError(
-            f"{path} -> {ext} 변환 실패 (returncode={proc.returncode}): "
+            f"Conversion of {path} -> {ext} failed (returncode={proc.returncode}): "
             f"{proc.stderr.strip()[:500]}"
         )
     return out_path

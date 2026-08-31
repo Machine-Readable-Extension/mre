@@ -1,36 +1,46 @@
 from __future__ import annotations
 
 """
-Legacy HWP 5.0(OLE2/Compound File Binary) 문서에서 문단 텍스트를 추출.
+Extract paragraph text from a legacy HWP 5.0 (OLE2/Compound File Binary) document.
 
-HWP 5.0 은 OPC(zip) 가 아니라 OLE2 compound file 컨테이너다 — mre.opc_adapter 의
-hwpx/docx 와는 컨테이너 포맷 자체가 달라 별도 모듈로 둔다. 문서 본문은
-BodyText/Section0, Section1, ... 스트림에 있고, FileHeader 스트림의 속성 플래그
-bit0 이 켜져 있으면 각 섹션 스트림은 raw deflate(zlib, wbits=-15)로 압축돼 있다.
-압축 해제된 바이트열은 (tag_id, level, size) 레코드의 연속이고, HWPTAG_PARA_TEXT(0x43)
-레코드가 문단 하나의 텍스트(UTF-16LE, 인라인 컨트롤 문자 섞임)를 담는다.
+HWP 5.0 is an OLE2 compound file container, not OPC (zip), so it gets its
+own module rather than living alongside mre.opc_adapter's hwpx/docx
+handling: the container format itself is different. The document body
+lives in the BodyText/Section0, Section1, ... streams; if bit 0 of the
+FileHeader stream's attribute flags is set, each section stream is
+compressed with raw deflate (zlib, wbits=-15). The decompressed bytes are a
+sequence of (tag_id, level, size) records, and an HWPTAG_PARA_TEXT (0x43)
+record holds one paragraph's text (UTF-16LE, with inline control characters
+mixed in).
 
-참고: https://pgc0419.tistory.com/entry/Python-한글-파일hwp-텍스트txt로-변환
-(레코드 헤더 파싱 골격은 이 글과 동일 — tag_id/level/size 비트필드, 0xFFF 확장
-크기. 그 글은 인라인 컨트롤 문자의 부가 파라미터 바이트를 스킵하지 않고 UTF-16
-전체를 디코딩한 뒤 정규식으로 사후 필터링하는데, 그러면 파라미터 바이트가 우연히
-읽을 수 있는 문자로 디코딩됐을 때 걸러지지 않거나, 반대로 whitelist가 한글/영문
-알파벳만 허용해 다른 언어 본문을 깨뜨린다. 이 모듈은 대신 컨트롤 문자 뒤에 오는
-부가 파라미터를 실제로 건너뛴다.)
+Reference: https://pgc0419.tistory.com/entry/Python-%ED%95%9C%EA%B8%80-%ED%8C%8C%EC%9D%BChwp-%ED%85%8D%EC%8A%A4%ED%8A%B8txt%EB%A1%9C-%EB%B3%80%ED%99%98
+(a Korean blog post on parsing HWP in Python). The record-header parsing
+skeleton here matches that post: the tag_id/level/size bitfields, the
+0xFFF extended-size sentinel. That post decodes the whole UTF-16 payload
+without skipping an inline control character's extra parameter bytes, then
+filters afterward with a regex; that approach either fails to catch
+parameter bytes that happen to decode into readable characters, or, if it
+whitelists only Hangul and Latin letters, corrupts text in other languages.
+This module instead actually skips the extra parameters that follow a
+control character.
 
-⚠️ olefile 은 읽기 전용이라 mre.xml 을 원본 파일에 in-place 로 삽입(embed)할 방법이
-없다 — 순수 파이썬으로 OLE2 CFB 에 새 스트림을 쓰는 실용적인 라이브러리가 마땅치
-않다. 그래서 이 모듈은 extract/strip 만 제공하고, opc_adapter.OPCAdapter 같은
-embed/exists/fetch 는 아직 없다 — generate_mre() 의 fmt=HWP 경로도 여전히
+Caution: olefile is read-only, so there's no way to embed mre.xml into the
+original file in place; there's no practical pure-Python library for
+writing a new stream into an OLE2 CFB container. This module therefore only
+provides extract/strip; there's no embed/exists/fetch like
+opc_adapter.OPCAdapter yet, and generate_mre()'s fmt=HWP path still raises
 NotImplementedError.
 
-⚠️ 인라인 컨트롤 문자(코드 1~31)의 부가 파라미터 크기는 HWP 5.0 배포용 문서 스펙을
-따른다: 대부분의 확장 컨트롤은 문자 자신 + 7 WCHAR(14바이트)의 파라미터로 총
-8 WCHAR 를 차지하고, 줄 나눔(10)과 문단 나눔(13)만 예외로 파라미터가 없다. 이 표는
-임베디드 개체/하이퍼링크/수식처럼 실제 파일에서 흔한 케이스에 대한 실물 검증이
-제한적이다 — 만에 하나 어긋나도 피해가 "이후 텍스트 전체가 깨짐"으로 번지지 않도록
-섹션별 파싱을 try/except 로 감싸고, 최종 텍스트에서 남은 C0 컨트롤 문자를 한 번 더
-걸러낸다(언어 whitelist 로 걸러내는 방식은 비-한국어 문서를 깨뜨리므로 쓰지 않는다).
+Caution: the extra-parameter size for inline control characters (codes
+1-31) follows the HWP 5.0 distribution document spec: most extended
+controls take up 8 WCHARs total (the character itself plus a 7-WCHAR/14-byte
+parameter), with line break (10) and paragraph break (13) as the only
+parameter-less exceptions. This table has only limited real-world
+verification against common cases like embedded objects, hyperlinks, or
+equations. To keep a mismatch from corrupting all subsequent text, each
+section is parsed inside its own try/except, and the final text gets one
+more pass to strip any leftover C0 control characters (a language whitelist
+isn't used for this, since it would corrupt non-Korean documents).
 """
 
 import re
@@ -49,18 +59,22 @@ HWPTAG_PARA_TEXT = HWPTAG_BEGIN + 51  # 0x43
 _SECTION_RE = re.compile(r"^BodyText/Section(\d+)$", re.IGNORECASE)
 _RECORD_HEADER_SIZE = 4
 _EXT_SIZE_SENTINEL = 0xFFF
-# 컨트롤 코드 -> 텍스트로 남길 문자(그 외 컨트롤은 파라미터만 스킵하고 텍스트엔 안 남김).
-# 9(TAB)/10(줄 나눔)/13(문단 나눔)만 실제 공백/구분자 의미가 있어 예외로 둔다.
+# Control code -> character to keep in the text (any other control code has
+# its parameter skipped and nothing added to the text). Only 9 (TAB),
+# 10 (line break), and 13 (paragraph break) carry real whitespace/separator
+# meaning, so they're the exceptions.
 _INLINE_TEXT_CHAR = {9: "\t", 10: "\n", 13: "\n"}
-# 컨트롤 코드 -> 부가 파라미터 WCHAR 수. 표에 없는 1~31 코드는 기본값(7)을 쓴다
-# (대부분의 확장 컨트롤이 실제로 7이므로). 9/10/13 은 텍스트로 남기더라도 부가
-# 파라미터는 그대로 스킵해야 한다(9는 탭 정의 정보 7 WCHAR, 10/13은 없음).
+# Control code -> number of extra parameter WCHARs. Codes 1-31 not listed
+# here default to 7, since that's the actual value for most extended
+# controls. Even when 9/10/13 are kept in the text, their extra parameters
+# still need to be skipped (9 has 7 WCHARs of tab-definition info; 10/13
+# have none).
 _INLINE_EXTRA_WCHARS = {9: 7, 10: 0, 13: 0}
 _DEFAULT_INLINE_EXTRA_WCHARS = 7
 
 
 def _is_compressed(ole: olefile.OleFileIO) -> bool:
-    """FileHeader 스트림의 속성 플래그(오프셋 36, 4바이트 LE) bit0 = 압축 여부."""
+    """Bit 0 of the FileHeader stream's attribute flags (offset 36, 4 bytes LE) tells whether the content is compressed."""
     with ole.openstream("FileHeader") as f:
         header = f.read(40)
     if len(header) < 40:
@@ -70,7 +84,7 @@ def _is_compressed(ole: olefile.OleFileIO) -> bool:
 
 
 def _section_stream_names(ole: olefile.OleFileIO) -> list[str]:
-    """BodyText/SectionN 스트림 경로를 섹션 번호 순으로 정렬해 반환."""
+    """Return BodyText/SectionN stream paths, sorted by section number."""
     numbered: list[tuple[int, str]] = []
     for entry in ole.listdir(streams=True, storages=False):
         path = "/".join(entry)
@@ -82,7 +96,7 @@ def _section_stream_names(ole: olefile.OleFileIO) -> list[str]:
 
 
 def _decode_para_text(payload: bytes) -> str:
-    """PARA_TEXT 레코드 payload(UTF-16LE, 인라인 컨트롤 섞임) -> 문단 텍스트."""
+    """Decode a PARA_TEXT record payload (UTF-16LE with inline controls mixed in) into paragraph text."""
     n_units = len(payload) // 2
     out: list[str] = []
     i = 0
@@ -95,17 +109,18 @@ def _decode_para_text(payload: bytes) -> str:
         extra = _INLINE_EXTRA_WCHARS.get(code, _DEFAULT_INLINE_EXTRA_WCHARS)
         if code in _INLINE_TEXT_CHAR:
             out.append(_INLINE_TEXT_CHAR[code])
-        # 그 외 제어문자는 텍스트에 안 남기고 인라인 파라미터만 스킵.
+        # Any other control character is dropped from the text; only its inline parameter is skipped.
         i += 1 + extra
     text = "".join(out)
-    # 안전망: 위 표가 실제 파일과 어긋나 파라미터 바이트가 문자로 잘못 디코딩됐을
-    # 경우를 대비해 남은 C0 제어문자만 한 번 더 제거(개행/탭 제외).
+    # Safety net: in case the table above diverges from a real file and a
+    # parameter byte got misdecoded as a character, strip any remaining C0
+    # control characters once more (newline/tab excluded).
     text = "".join(ch for ch in text if ch in "\n\t" or unicodedata.category(ch) != "Cc")
     return text.strip()
 
 
 def _parse_records(data: bytes) -> list[str]:
-    """압축 해제된 섹션 바이트열 -> PARA_TEXT 레코드들의 텍스트 리스트(문서 순서)."""
+    """Decode a decompressed section's bytes into the text of its PARA_TEXT records, in document order."""
     texts: list[str] = []
     pos = 0
     n = len(data)

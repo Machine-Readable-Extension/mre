@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 """
-Wikipedia appendix section 필터 + 짧은 section 통합 — HTML 문서를 LLM에 보내기 전 정리한다.
+Wikipedia appendix section filtering and short-section consolidation, used
+to clean up an HTML document before it's sent to the LLM.
 
-data_utils/mre_generator3.py의 동명 섹션을 이 라이브러리 배포 경계 안으로 옮겨왔다.
+Ported from the same-named section of data_utils/mre_generator3.py into this
+library's distribution boundary.
 
-**주의(single truth)**: 여기서 soup 를 변형(부록 제거/짧은 section 병합)한 순서를 기준으로
-생성 시점에 문단 id(pN)가 부여된다. 최종 문서에는 원본(미변형) HTML 이 그대로 embed 되므로,
-나중에 pid 로 fetch 할 때도 반드시 이 두 함수를 같은 순서로 다시 적용한 뒤 문단을 walk 해야
-생성 시점의 pid 순번과 fetch 시점의 walk 순번이 일치한다 (core/pipeline.py의 _fetch_blocks_v3
-가 실제로 이렇게 한다). 이 규칙이 어긋나면 pid 가 엉뚱한 블록을 가리키게 된다.
+**Single source of truth**: paragraph ids (pN) are assigned at generation
+time based on the order in which these functions transform the soup
+(stripping appendices, merging short sections). The final document embeds
+the original, untransformed HTML, so a later pid-based fetch must reapply
+these same two functions in the same order before walking paragraphs, for
+the generation-time pid sequence to line up with the fetch-time walk
+sequence (core/pipeline.py's _fetch_blocks_v3 does exactly this). Breaking
+this rule makes a pid point at the wrong block.
 """
 
 import re
@@ -38,7 +43,7 @@ _HEADING_TAG_RE = re.compile(r"^h[1-6]$")
 
 
 def _heading_level_from_div(div: Tag) -> int | None:
-    """`<div class="mw-heading mw-heading{k}">` 에서 k 를 뽑는다. 안에 h1-h6 도 검사."""
+    """Extract k from `<div class="mw-heading mw-heading{k}">`. Also checks for a nested h1-h6."""
     for cls in div.get("class") or []:
         if cls.startswith("mw-heading") and cls != "mw-heading":
             try:
@@ -55,8 +60,9 @@ def _heading_level_from_div(div: Tag) -> int | None:
 
 
 def _is_appendix_heading_div(div: Tag) -> tuple[bool, str, int]:
-    """div 가 부록 heading 컨테이너 (`<div class="mw-heading...">` 안에 부록 h#) 인지 판정.
-    반환: (부록 여부, 텍스트, 레벨).
+    """Check whether div is an appendix heading container (an appendix h# inside `<div class="mw-heading...">`).
+
+    Returns (is_appendix, text, level).
     """
     raw_cls: str | list[str] = div.get("class") or []
     cls: list[str] = [raw_cls] if isinstance(raw_cls, str) else list(raw_cls)
@@ -74,30 +80,38 @@ def _is_appendix_heading_div(div: Tag) -> tuple[bool, str, int]:
 
 
 def _strip_appendix_sections(soup: BeautifulSoup) -> list[tuple[int, str]]:
-    """부록 (`External links` / `References` / `See also` 등) 을 in-place 로 제거한다.
-    반환값은 발견된 부록 heading 리스트 (문서 순서대로) — [(level, text), ...]. 현재는 이
-    라이브러리도 원본 data_utils/mre_generator3.py 도 이 반환값을 실제로 소비하지 않는다
-    (양쪽 다 in-place 제거 효과만 쓰고 호출부에서 버림) — 과거 "부록을 빈 <section> marker로
-    남긴다" 구상의 흔적이지만 지금은 구현이 없다. 시그니처만 남아 있으므로 향후 필요해지면
-    호출부에서 받아쓰면 된다.
+    """Remove appendix sections (`External links` / `References` / `See also`, etc.) in place.
 
-    두 가지 HTML 형태 지원:
-      1. Parsoid: 최상위 섹션이 `<section aria-labelledby="…">` 로 감싸짐 → section decompose
-      2. non-Parsoid (2wiki/older dump): `<section>` 태그 없고 `<div class="mw-heading">` 이
-         sibling 으로만 존재. body container 를 walk 하며 mw-heading div (h# id 가 부록 집합에
-         포함) 부터 다음 mw-heading div 직전까지의 노드들을 통째로 제거. asbox/navbox/stub
-         div 도 이 sibling 스캔에서 자연스럽게 함께 사라진다.
+    Returns the appendix headings found, in document order, as
+    [(level, text), ...]. Neither this library nor the original
+    data_utils/mre_generator3.py actually consumes this return value today
+    (both only rely on the in-place removal and discard it at the call
+    site). It's a leftover from an earlier "leave appendices as empty
+    <section> markers" design that was never implemented. The signature
+    stays as is so a future caller can pick it up if needed.
 
-    heading level 은 `mw-heading{k}` 클래스 또는 h# 태그명에서 뽑는다.
+    Supports two HTML shapes:
+      1. Parsoid: the top-level section is wrapped in
+         `<section aria-labelledby="...">`, so the whole section gets
+         decomposed.
+      2. non-Parsoid (2wiki/older dumps): no `<section>` tag; `<div
+         class="mw-heading">` appears only as a sibling. Walks the body
+         container and removes everything from an appendix mw-heading div
+         (whose h# id is in the appendix set) up to just before the next
+         mw-heading div. asbox/navbox/stub divs disappear naturally in this
+         same sibling scan.
+
+    Heading level comes from the `mw-heading{k}` class or the h# tag name.
     """
     appendix: list[tuple[int, str]] = []
 
-    # 1) Parsoid: <section aria-labelledby="External_links"> 통째 삭제
-    # 실제 위키피디아 문서는 <section>이 중첩된다(상위 섹션 안에 하위 섹션) --
-    # find_all("section")은 중첩 여부와 무관하게 전부 flat하게 반환하므로, 앞선
-    # 반복에서 상위 섹션을 decompose()하면 그 안에 중첩돼 있던 하위 섹션도 (bs4가
-    # decompose 시 하위 트리 전체의 attrs/contents를 재귀적으로 비우기 때문에) 이미
-    # 리스트에 담겨 있던 참조가 망가진다. .decomposed로 그런 죽은 참조를 건너뛴다.
+    # 1) Parsoid: decompose the whole <section aria-labelledby="External_links">.
+    # Real Wikipedia HTML nests <section> tags (a parent section containing child
+    # subsections). find_all("section") returns every <section> in one flat list
+    # regardless of nesting, so decomposing an outer section in an earlier
+    # iteration can leave stale references to its now-decomposed descendants
+    # later in that same list (bs4's decompose() recursively clears the whole
+    # subtree). Use .decomposed to skip those dead references.
     for sec in list(soup.find_all("section")):
         if getattr(sec, "decomposed", False):
             continue
@@ -118,7 +132,7 @@ def _strip_appendix_sections(soup: BeautifulSoup) -> list[tuple[int, str]]:
         appendix.append((level, text))
         sec.decompose()
 
-    # 2) non-Parsoid: body container 안에서 mw-heading div sibling 스캔
+    # 2) non-Parsoid: scan mw-heading div siblings inside the body container
     container = (
         soup.find(id="bodyContent")
         or soup.find("div", class_="mw-parser-output")
@@ -128,24 +142,26 @@ def _strip_appendix_sections(soup: BeautifulSoup) -> list[tuple[int, str]]:
     if container is None:
         return appendix
 
-    # mw-heading div 를 문서 순서대로 수집 (build_structure_tree 와 동일 walk 규약).
-    # container 자식 재귀 없이 top-level heading 만 봐도 대부분 케이스는 커버되지만,
-    # 안전하게 descendants 도 훑어 heading 위치를 잡고 sibling-체인 으로 삭제한다.
+    # Collect mw-heading divs in document order (same walk convention as
+    # build_structure_tree). Looking only at top-level headings without
+    # recursing into container's children would cover most cases, but we
+    # scan descendants too for safety, and delete via a sibling chain.
     for div in list(container.find_all("div", class_=lambda c: c and "mw-heading" in c)):
-        # 위 (1)과 같은 이유 -- 앞선 반복의 sibling-체인 decompose가 이 div를 이미
-        # 하위 트리째 날려버렸을 수 있다 (예: 두 heading div 사이의 wrapper 안에
-        # mw-heading div가 중첩된 드문 경우).
+        # Same reason as (1) above: an earlier iteration's sibling-chain
+        # decompose may already have wiped out this div along with its
+        # subtree (e.g. the rare case of an mw-heading div nested inside a
+        # wrapper between two heading divs).
         if getattr(div, "decomposed", False):
             continue
         is_app, text, level = _is_appendix_heading_div(div)
         if not is_app:
             continue
         appendix.append((level, text))
-        # 해당 div 부터 다음 mw-heading div 직전까지 sibling 을 모두 제거
+        # Remove every sibling from this div up to just before the next mw-heading div.
         cur: PageElement | None = div
         while cur is not None:
             nxt = cur.next_sibling
-            # 다음 mw-heading div 만나면 stop (그 위치가 다음 섹션 시작)
+            # Stop once we hit the next mw-heading div; that's where the next section starts.
             if isinstance(nxt, Tag) and nxt.name == "div":
                 raw_nxt_cls: str | list[str] = nxt.get("class") or []
                 nxt_cls: list[str] = [raw_nxt_cls] if isinstance(raw_nxt_cls, str) else list(raw_nxt_cls)
@@ -158,10 +174,13 @@ def _strip_appendix_sections(soup: BeautifulSoup) -> list[tuple[int, str]]:
     return appendix
 
 
-# 짧은 섹션 통합 임계값 (문자 수) — 이 미만이면 섹션의 모든 <p>/<ul>/<ol> 를 하나의 <p> 로 합쳐
-# 한 개의 요약 노드만 생성한다. Wikipedia 스텁/짧은 subsection 이 문단마다 desc/keys 생성되어
-# 노이즈가 되는 것을 방지. 500 은 문단 3-4개 정도의 규모 — 이 이하면 개별 문단으로 나눠도
-# heading/keywords 가 서로 거의 같아 정보량이 없음.
+# Short-section merge threshold, in characters. Below this, every
+# <p>/<ul>/<ol> in a section gets merged into a single <p>, producing one
+# summary node instead of many. This keeps Wikipedia stubs and short
+# subsections from generating a desc/keys pair per paragraph and adding
+# noise. 500 chars is roughly 3-4 paragraphs; below that, splitting into
+# individual paragraphs produces near-identical heading/keywords with no
+# real information gain.
 _SHORT_SECTION_MERGE_THRESHOLD_CHARS = 500
 
 
@@ -169,15 +188,16 @@ def _consolidate_short_sections(
     soup: BeautifulSoup,
     threshold_chars: int = _SHORT_SECTION_MERGE_THRESHOLD_CHARS,
 ) -> int:
-    """짧은 <section> 내부 direct <p>/<ul>/<ol> 을 하나의 <p> 로 합친다 (in-place).
+    """Merge the direct <p>/<ul>/<ol> children of a short <section> into a single <p>, in place.
 
-    각 <section> 의 direct 자식 중 <p>/<ul>/<ol> (references 제외) 의 텍스트 총량이
-    threshold_chars 미만이면, 그 요소들을 모두 지우고 텍스트를 합친 새 <p> 하나로 교체한다.
-    nested <section> 안 콘텐츠는 각자의 <section> 스코프에서 별도 판정 (재귀 아님, 상위
-    section 이 안쪽 sub-section 텍스트를 상속하지 않는다). heading (<div class="mw-heading">)
-    은 건드리지 않으므로 section 제목은 그대로 남는다.
+    If a <section>'s direct <p>/<ul>/<ol> children (excluding references)
+    total under threshold_chars of text, they all get removed and replaced
+    with one new <p> holding the combined text. Content inside nested
+    <section>s is evaluated in its own section's scope, not recursively:
+    a parent section doesn't inherit its sub-sections' text. Headings
+    (<div class="mw-heading">) are left untouched, so section titles remain.
 
-    반환값: 통합된 section 수.
+    Returns the number of sections merged.
     """
     n_merged = 0
     for sec in soup.find_all("section"):
@@ -191,7 +211,7 @@ def _consolidate_short_sections(
                 continue
             content_els.append(child)
         if len(content_els) < 2:
-            continue   # 이미 0개거나 1개면 합칠 게 없음
+            continue   # nothing to merge with 0 or 1 element
         texts: list[str] = []
         for el in content_els:
             t = el.get_text(separator=" ", strip=True)

@@ -173,8 +173,9 @@ def embed_mre_pdf(path: str | Path, mre_xml: str) -> None:
     _remove_existing_mre_attachment(writer)
     writer.add_attachment(_MRE_ATTACHMENT_NAME, mre_xml.encode("utf-8"))
 
-    # insert_mre_into_zip()과 동일한 원자적 교체 패턴 -- 같은 디렉토리에 임시 파일을 만들어
-    # cross-device rename 회피, 실패 시 원본 파일은 그대로 남는다.
+    # Same atomic-replace pattern as insert_mre_into_zip(): create the temp
+    # file in the same directory to avoid a cross-device rename, and leave
+    # the original file untouched on failure.
     tmp_fd, tmp_name = tempfile.mkstemp(prefix=".mre_tmp_", suffix=".pdf", dir=str(path.parent))
     os.close(tmp_fd)
     tmp_path = Path(tmp_name)
