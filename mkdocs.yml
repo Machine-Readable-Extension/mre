@@ -23,11 +23,13 @@ nav:
   - Quick start: quickstart.md
   - Agentic RAG: agentic-rag.md
   - Document formats: formats.md
+  - Adding your site: adding-a-site.md
   - Specification: spec.md
   - API Reference: api.md
 
 plugins:
   - search
+  - social
   - mkdocstrings:
       handlers:
         python:

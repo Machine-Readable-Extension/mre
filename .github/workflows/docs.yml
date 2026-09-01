@@ -27,6 +27,12 @@ jobs:
         with:
           python-version: "3.12"
 
+      # The "social" mkdocs-material plugin renders share-preview cards via
+      # cairosvg, which needs the libcairo2 shared library at runtime (not
+      # just the pip-installed Python bindings from the [imaging] extra).
+      - name: Install system deps for social card rendering
+        run: sudo apt-get update && sudo apt-get install -y libcairo2
+
       - name: Install mre with docs extras
         run: pip install -e ".[docs]"
 
