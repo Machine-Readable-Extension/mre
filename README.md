@@ -6,6 +6,8 @@
 [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=Machine-Readable-Extension_mre&metric=coverage)](https://sonarcloud.io/summary/new_code?id=Machine-Readable-Extension_mre)
 [![Docs](https://img.shields.io/badge/docs-machine--readable--extension.github.io-blue)](https://machine-readable-extension.github.io/py-mre/)
 
+<img width="1890" height="709" alt="Candidate Documents with MRE (3)" src="https://github.com/user-attachments/assets/42afaaed-2ae0-4d09-8e83-2f26c4316cf1" />
+
 **Machine-Readable Extension (MRE)** — a producer-side document standard and
 navigation structure that lets LLM agents read a document precisely, instead
 of consuming its raw, markup-heavy source.
