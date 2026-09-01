@@ -87,11 +87,11 @@ chasing a multi-hop query. Paragraph text itself is *not* in the header —
 it's fetched on demand by ID from the source document, by a separate
 retrieval-side parser. Full schema: [Specification](https://machine-readable-extension.github.io/py-mre/spec/).
 
-Early experiments on MRE-based agentic RAG show up to a 48.4% relative F1
-improvement over baselines on multi-hop QA benchmarks, by letting the agent
-target the right paragraph instead of reading (or missing) it inside a
-long, noisy context. Write-up is in progress (not yet on arXiv); benchmark
-and evaluation code lives at
+In our evaluation across five QA benchmarks against 14 baseline systems,
+MRE-based agentic RAG shows up to a 48.4% relative F1 improvement on
+multi-hop QA, by letting the agent target the right paragraph instead of
+reading (or missing) it inside a long, noisy context. Write-up is in
+progress (not yet on arXiv); benchmark and evaluation code lives at
 [Lactobacillus/machine-readable-extension](https://github.com/Lactobacillus/machine-readable-extension).
 
 ## Install
@@ -252,7 +252,7 @@ Ship it as an installable plugin — an `mre.site_adapters` entry point, exactly
 [`examples/mre-example-adapter/`](examples/mre-example-adapter) — and anyone who
 `pip install`s your package gets clean parsing for that site automatically, no PR to
 `mre` itself needed. Full guide, including the entry-point plugin setup:
-[Adding a new HTML site](https://machine-readable-extension.github.io/py-mre/formats/#adding-a-new-html-site).
+[Adding your site](https://machine-readable-extension.github.io/py-mre/adding-a-site/).
 
 If a site *does* want to go further and publish real MRE headers (so agents can jump
 straight to a paragraph by ID instead of just getting clean text), implement
