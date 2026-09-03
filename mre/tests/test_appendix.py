@@ -52,6 +52,27 @@ def test_strip_appendix_sections_survives_nested_sections_inside_appendix():
     assert "cite 1" not in soup.get_text()
 
 
+def test_strip_appendix_sections_removes_sources():
+    """Wikipedia biography-style articles commonly use a "Sources" heading
+    for their bibliography/citation list (distinct from "References" and
+    "Bibliography", which were already stripped). Real examples: "Gerard,
+    Count of Rieneck", "Moritz of Limburg".
+    """
+    soup = BeautifulSoup(
+        '<body>'
+        '<section aria-labelledby="Intro"><h2 id="Intro">Intro</h2><p>body text</p></section>'
+        '<section aria-labelledby="Sources"><h2 id="Sources">Sources</h2><p>cite 1</p></section>'
+        '</body>',
+        "lxml",
+    )
+    appendix = _strip_appendix_sections(soup)
+
+    assert appendix == [(2, "Sources")]
+    assert soup.find(id="Sources") is None
+    assert "body text" in soup.get_text()
+    assert "cite 1" not in soup.get_text()
+
+
 def test_strip_appendix_sections_non_parsoid_mw_heading_divs():
     soup = BeautifulSoup(
         '<div class="mw-parser-output">'

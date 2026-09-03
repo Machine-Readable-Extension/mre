@@ -29,6 +29,7 @@ _APPENDIX_HEADING_IDS: set[str] = {
     "Notes",
     "Further_reading",
     "Bibliography",
+    "Sources",
 }
 _APPENDIX_HEADING_TEXT: set[str] = {
     "External links",
@@ -38,6 +39,7 @@ _APPENDIX_HEADING_TEXT: set[str] = {
     "Notes",
     "Further reading",
     "Bibliography",
+    "Sources",
 }
 _HEADING_TAG_RE = re.compile(r"^h[1-6]$")
 
